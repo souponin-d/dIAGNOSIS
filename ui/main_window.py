@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
         self._section_pages: dict[str, QWidget] = {}
         self._startup_view = True
         self._drag_position: QPoint | None = None
+        self._startup_button_container: QWidget | None = None
 
         self._init_ui()
         self._center_on_screen()
@@ -92,6 +93,32 @@ class MainWindow(QMainWindow):
             self._background_pixmap = pixmap
             self._apply_startup_background_size()
             self._update_background_pixmap()
+
+        button_container = QWidget(central_widget)
+        button_container.setAttribute(Qt.WA_StyledBackground, True)
+        button_container.setStyleSheet("background-color: transparent;")
+        button_container.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 0, 0, 24)
+        button_layout.setSpacing(24)
+        button_layout.setAlignment(Qt.AlignCenter)
+
+        close_button = QPushButton("Х", button_container)
+        close_button.setCursor(Qt.PointingHandCursor)
+        close_button.setFixedWidth(100)
+        close_button.clicked.connect(self.close)
+        button_layout.addWidget(close_button)
+
+        create_button = QPushButton("Создать", button_container)
+        create_button.setCursor(Qt.PointingHandCursor)
+        create_button.setFixedWidth(160)
+        create_button.clicked.connect(self._open_create_dialog)
+        button_layout.addWidget(create_button)
+
+        layout.addWidget(button_container, alignment=Qt.AlignHCenter | Qt.AlignBottom)
+        self._startup_button_container = button_container
 
         self.menuBar().hide()
 
@@ -175,8 +202,8 @@ class MainWindow(QMainWindow):
         if not pixmap_size.isValid():
             return
 
-        desired_width = max(int(pixmap_size.width() / 1.5), 1)
-        desired_height = max(int(pixmap_size.height() / 1.5), 1)
+        desired_width = max(int(pixmap_size.width() / 2.5), 1)
+        desired_height = max(int(pixmap_size.height() / 2.5), 1)
         desired_size = QSize(desired_width, desired_height)
 
         app = self._application or QApplication.instance()
@@ -217,8 +244,8 @@ class MainWindow(QMainWindow):
         if not original_size.isValid():
             return
 
-        reduced_width = max(int(original_size.width() / 1.5), 1)
-        reduced_height = max(int(original_size.height() / 1.5), 1)
+        reduced_width = max(int(original_size.width() / 2.5), 1)
+        reduced_height = max(int(original_size.height() / 2.5), 1)
         desired_size = QSize(reduced_width, reduced_height)
 
         if desired_size.width() > available_size.width() or desired_size.height() > available_size.height():
@@ -241,6 +268,11 @@ class MainWindow(QMainWindow):
             self._background_label.deleteLater()
             self._background_label = None
             self._background_pixmap = None
+
+        if self._startup_button_container:
+            self._startup_button_container.hide()
+            self._startup_button_container.deleteLater()
+            self._startup_button_container = None
 
         self._startup_view = False
         self.setAttribute(Qt.WA_TranslucentBackground, False)
