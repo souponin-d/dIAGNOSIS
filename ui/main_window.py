@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCharts import QChart, QChartView, QScatterSeries
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QRectF, QSize, Qt, QWIDGETSIZE_MAX
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QAction, QIcon, QMouseEvent, QPainter, QPixmap, QRegion
 from PySide6.QtWidgets import (
     QApplication,
@@ -21,6 +21,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+try:
+    from PySide6.QtWidgets import QWIDGETSIZE_MAX
+except ImportError:  # pragma: no cover - fallback for PySide6 versions without the constant
+    QWIDGETSIZE_MAX = (1 << 24) - 1
 
 from config import AppConfig
 from ui.dialogs.create_patient_dialog import CreatePatientDialog
