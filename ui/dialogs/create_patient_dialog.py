@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Dict
 
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
     QHBoxLayout,
+    QGraphicsOpacityEffect,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -39,6 +41,13 @@ class CreatePatientDialog(QDialog):
         self.setModal(True)
 
         self._inputs: Dict[str, QLineEdit] = {}
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._fade_animation = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        self._fade_animation.setDuration(1000)
+        self._fade_animation.setStartValue(0.0)
+        self._fade_animation.setEndValue(1.0)
+        self._fade_animation.setEasingCurve(QEasingCurve.InOutQuad)
 
         self._build_layout()
 
@@ -86,3 +95,9 @@ class CreatePatientDialog(QDialog):
         """Return the current values from the input fields."""
 
         return {label: field.text() for label, field in self._inputs.items()}
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        self._opacity_effect.setOpacity(0.0)
+        self._fade_animation.stop()
+        self._fade_animation.start()
+        super().showEvent(event)
