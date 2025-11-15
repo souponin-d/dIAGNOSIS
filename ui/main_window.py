@@ -7,7 +7,7 @@ from typing import Optional
 
 from PySide6.QtCharts import QChart, QChartView, QScatterSeries
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QSize, Qt
-from PySide6.QtGui import QAction, QIcon, QKeyEvent, QMouseEvent, QPixmap
+from PySide6.QtGui import QAction, QIcon, QKeyEvent, QMouseEvent, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QSizePolicy,
+    QStackedLayout,
     QToolButton,
     QTabWidget,
     QVBoxLayout,
@@ -74,7 +75,8 @@ class MainWindow(QMainWindow):
         central_widget.setStyleSheet("background-color: transparent;")
         self.setCentralWidget(central_widget)
 
-        layout = QVBoxLayout(central_widget)
+        layout = QStackedLayout(central_widget)
+        layout.setStackingMode(QStackedLayout.StackAll)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
@@ -88,13 +90,15 @@ class MainWindow(QMainWindow):
         self._background_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         layout.addWidget(self._background_label)
 
-        pixmap = QPixmap(str(self._BACKGROUND_PATH))
-        if not pixmap.isNull():
-            self._background_pixmap = pixmap
-            self._apply_startup_background_size()
-            self._update_background_pixmap()
+        overlay_widget = QWidget(central_widget)
+        overlay_widget.setAttribute(Qt.WA_StyledBackground, True)
+        overlay_widget.setStyleSheet("background-color: transparent;")
+        overlay_layout = QVBoxLayout(overlay_widget)
+        overlay_layout.setContentsMargins(48, 48, 48, 48)
+        overlay_layout.setSpacing(0)
+        overlay_layout.addStretch()
 
-        button_container = QWidget(central_widget)
+        button_container = QWidget(overlay_widget)
         button_container.setAttribute(Qt.WA_StyledBackground, True)
         button_container.setStyleSheet("background-color: transparent;")
         button_container.setSizePolicy(
@@ -117,8 +121,18 @@ class MainWindow(QMainWindow):
         create_button.clicked.connect(self._open_create_dialog)
         button_layout.addWidget(create_button)
 
-        layout.addWidget(button_container, alignment=Qt.AlignHCenter | Qt.AlignBottom)
+        overlay_layout.addWidget(
+            button_container, alignment=Qt.AlignHCenter | Qt.AlignBottom
+        )
+
+        layout.addWidget(overlay_widget)
         self._startup_button_container = button_container
+
+        pixmap = QPixmap(str(self._BACKGROUND_PATH))
+        if not pixmap.isNull():
+            self._background_pixmap = pixmap
+            self._apply_startup_background_size()
+            self._update_background_pixmap()
 
         self.menuBar().hide()
 
