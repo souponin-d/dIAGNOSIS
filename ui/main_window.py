@@ -2,74 +2,88 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QApplication,
-    QHBoxLayout,
-    QMainWindow,
-    QMessageBox,
-    QWidget,
-)
+from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from config import AppConfig
-from services.factory import AnalysisService, get_analysis_service
-from ui.dialogs.settings_dialog import SettingsDialog
-from ui.widgets.patient_form import PatientForm
-from ui.widgets.results_view import ResultsView
-from ui.widgets.toolbar import MainToolbar
-from ui.workers import AnalysisWorker
+from ui.dialogs.create_patient_dialog import CreatePatientDialog
 
 
 class MainWindow(QMainWindow):
-    """Primary window coordinating UI and service interactions."""
+    """Primary window displaying the start screen with background and menu."""
+
+    _BACKGROUND_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "background.png"
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
         self._config = config
         self._application = application
-        self._analysis_service: AnalysisService = get_analysis_service(config)
-        self._analysis_worker: Optional[AnalysisWorker] = None
-        self._toolbar: Optional[MainToolbar] = None
 
         self.setWindowTitle("dIAGNOSIS")
-        self.resize(900, 600)
+        self.setFixedSize(1920, 1080)
+
+        self._background_label: QLabel | None = None
+
         self._init_ui()
+        self._create_menus()
 
     def _init_ui(self) -> None:
         central_widget = QWidget(self)
+        central_widget.setContentsMargins(0, 0, 0, 0)
         self.setCentralWidget(central_widget)
 
-        self._patient_form = PatientForm(self)
-        self._results_view = ResultsView(self)
-
-        layout = QHBoxLayout(central_widget)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         central_widget.setLayout(layout)
-        layout.addWidget(self._patient_form, 1)
-        layout.addWidget(self._results_view, 1)
 
-        self._toolbar = MainToolbar(self)
-        self._toolbar.settings_requested.connect(self.open_settings)
-        self.addToolBar(Qt.TopToolBarArea, self._toolbar)
-        self._patient_form.analyze_requested.connect(self._start_analysis)
+        self._background_label = QLabel(self)
+        self._background_label.setAlignment(Qt.AlignCenter)
+        self._background_label.setContentsMargins(0, 0, 0, 0)
 
-    def _start_analysis(self, payload: dict) -> None:
-        if self._analysis_worker is not None:
-            self._analysis_worker.quit()
-            self._analysis_worker.wait()
+        pixmap = QPixmap(str(self._BACKGROUND_PATH))
+        if not pixmap.isNull():
+            self._background_label.setPixmap(pixmap)
 
-        self._analysis_worker = AnalysisWorker(self._analysis_service, payload)
-        self._analysis_worker.finished.connect(self._on_analysis_finished)
-        self._analysis_worker.errored.connect(self._on_analysis_error)
-        self._analysis_worker.start()
+        layout.addWidget(self._background_label, alignment=Qt.AlignCenter)
 
-    def _on_analysis_finished(self, result: dict) -> None:
-        self._results_view.show_result(result)
+    def _create_menus(self) -> None:
+        menu_bar = self.menuBar()
 
-    def _on_analysis_error(self, message: str) -> None:
-        QMessageBox.warning(self, "Ошибка анализа", message)
+        file_menu = menu_bar.addMenu("Файл")
 
-    def open_settings(self) -> None:
-        dialog = SettingsDialog(self._config, self)
+        create_action = QAction("Создать...", self)
+        create_action.triggered.connect(self._open_create_dialog)
+        file_menu.addAction(create_action)
+
+        open_action = QAction("Открыть...", self)
+        file_menu.addAction(open_action)
+
+        save_action = QAction("Сохранить", self)
+        save_action.setEnabled(False)
+        file_menu.addAction(save_action)
+
+        save_as_action = QAction("Сохранить как...", self)
+        file_menu.addAction(save_as_action)
+
+        file_menu.addSeparator()
+
+        close_project_action = QAction("Закрыть проект", self)
+        close_project_action.setEnabled(False)
+        file_menu.addAction(close_project_action)
+
+        file_menu.addSeparator()
+
+        exit_action = QAction("Выход", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        menu_bar.addMenu("Помощь")
+
+    def _open_create_dialog(self) -> None:
+        dialog = CreatePatientDialog(self)
         dialog.exec()
