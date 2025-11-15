@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCharts import QChart, QChartView, QScatterSeries
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QAction, QIcon, QMouseEvent, QPainter, QPixmap, QRegion
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QSize, Qt
+from PySide6.QtGui import QAction, QIcon, QKeyEvent, QMouseEvent, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -38,8 +38,6 @@ class MainWindow(QMainWindow):
     _BACKGROUND_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "background.png"
     _ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "logo.png"
     _MENU_EXPANDED_WIDTH = 240
-    _WINDOW_RADIUS = 40
-    _ILLUSTRATION_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "logo.png"
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
@@ -52,7 +50,6 @@ class MainWindow(QMainWindow):
         self.setWindowFlag(Qt.FramelessWindowHint, True)
         self.setWindowFlag(Qt.WindowMaximizeButtonHint, False)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setFixedSize(self.size())
 
         self._background_label: QLabel | None = None
         self._background_pixmap: QPixmap | None = None
@@ -65,7 +62,6 @@ class MainWindow(QMainWindow):
         self._section_pages: dict[str, QWidget] = {}
         self._startup_view = True
         self._drag_position: QPoint | None = None
-        self._illustration_label: QLabel | None = None
 
         self._init_ui()
         self._center_on_screen()
@@ -77,6 +73,10 @@ class MainWindow(QMainWindow):
         central_widget.setStyleSheet("background-color: transparent;")
         self.setCentralWidget(central_widget)
 
+        layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
         self._background_label = QLabel(central_widget)
         self._background_label.setAlignment(Qt.AlignCenter)
         self._background_label.setContentsMargins(0, 0, 0, 0)
@@ -85,60 +85,12 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding,
         )
         self._background_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._background_label.lower()
-
-        content_widget = QWidget(central_widget)
-        content_widget.setObjectName("startupContent")
-        content_widget.setAttribute(Qt.WA_StyledBackground, True)
-        content_widget.setStyleSheet(
-            "#startupContent { background-color: rgba(255, 255, 255, 235); border-radius: 40px; }"
-        )
-
-        layout = QVBoxLayout(central_widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(content_widget)
-
-        content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
-        content_widget.setLayout(content_layout)
-
-        buttons_layout = QHBoxLayout()
-        buttons_layout.setContentsMargins(24, 24, 24, 0)
-        buttons_layout.setSpacing(12)
-        buttons_layout.addStretch()
-
-        create_button = QPushButton("Создать", content_widget)
-        create_button.setCursor(Qt.PointingHandCursor)
-        create_button.setFixedHeight(36)
-        create_button.clicked.connect(self._open_create_dialog)
-        buttons_layout.addWidget(create_button)
-
-        close_button = QPushButton("Х", content_widget)
-        close_button.setCursor(Qt.PointingHandCursor)
-        close_button.setFixedSize(36, 36)
-        close_button.clicked.connect(self.close)
-        buttons_layout.addWidget(close_button)
-
-        content_layout.addLayout(buttons_layout)
-        content_layout.addStretch()
-
-        illustration_label = QLabel(content_widget)
-        illustration_label.setAlignment(Qt.AlignCenter)
-        illustration_label.setAttribute(Qt.WA_TranslucentBackground, True)
-        illustration_pixmap = QPixmap(str(self._ILLUSTRATION_PATH))
-        if not illustration_pixmap.isNull():
-            illustration_label.setPixmap(
-                illustration_pixmap.scaled(320, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            )
-        content_layout.addWidget(illustration_label)
-        self._illustration_label = illustration_label
-        content_layout.addStretch()
+        layout.addWidget(self._background_label)
 
         pixmap = QPixmap(str(self._BACKGROUND_PATH))
         if not pixmap.isNull():
             self._background_pixmap = pixmap
+            self._apply_startup_background_size()
             self._update_background_pixmap()
 
         self.menuBar().hide()
@@ -202,17 +154,46 @@ class MainWindow(QMainWindow):
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._update_background_pixmap()
-        self._apply_window_mask()
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self._update_background_pixmap()
-        self._apply_window_mask()
 
     def _open_create_dialog(self) -> None:
         dialog = CreatePatientDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._transition_to_full_screen()
+
+    def _apply_startup_background_size(self) -> None:
+        if not self._startup_view:
+            return
+
+        if not self._background_pixmap or self._background_pixmap.isNull():
+            return
+
+        pixmap_size = self._background_pixmap.size()
+        if not pixmap_size.isValid():
+            return
+
+        desired_width = max(int(pixmap_size.width() / 1.5), 1)
+        desired_height = max(int(pixmap_size.height() / 1.5), 1)
+        desired_size = QSize(desired_width, desired_height)
+
+        app = self._application or QApplication.instance()
+        screen_size = QSize()
+        if app:
+            screen = app.primaryScreen()
+            if screen:
+                screen_size = screen.availableGeometry().size()
+
+        if screen_size.isValid() and (
+            desired_size.width() > screen_size.width()
+            or desired_size.height() > screen_size.height()
+        ):
+            desired_size = desired_size.scaled(screen_size, Qt.KeepAspectRatio)
+
+        self.resize(desired_size)
+        self.setFixedSize(desired_size)
 
     def _update_background_pixmap(self) -> None:
         if not self._background_label:
@@ -225,65 +206,31 @@ class MainWindow(QMainWindow):
         if central_widget is None:
             return
 
-        target_size = central_widget.size()
-        if not target_size.isValid():
+        available_size = central_widget.size()
+        if not available_size.isValid():
             return
 
-        self._background_label.resize(target_size)
+        self._background_label.resize(available_size)
         self._background_label.move(0, 0)
 
+        original_size = self._background_pixmap.size()
+        if not original_size.isValid():
+            return
+
+        reduced_width = max(int(original_size.width() / 1.5), 1)
+        reduced_height = max(int(original_size.height() / 1.5), 1)
+        desired_size = QSize(reduced_width, reduced_height)
+
+        if desired_size.width() > available_size.width() or desired_size.height() > available_size.height():
+            desired_size = desired_size.scaled(available_size, Qt.KeepAspectRatio)
+
         scaled_pixmap = self._background_pixmap.scaled(
-            target_size,
-            Qt.KeepAspectRatioByExpanding,
+            desired_size,
+            Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
 
-        if scaled_pixmap.size() != target_size:
-            x_offset = max((scaled_pixmap.width() - target_size.width()) // 2, 0)
-            y_offset = max((scaled_pixmap.height() - target_size.height()) // 2, 0)
-            cropped_pixmap = scaled_pixmap.copy(
-                x_offset,
-                y_offset,
-                target_size.width(),
-                target_size.height(),
-            )
-        else:
-            cropped_pixmap = scaled_pixmap
-
-        self._background_label.setPixmap(cropped_pixmap)
-        self._background_label.lower()
-
-    def _apply_window_mask(self) -> None:
-        if not self._startup_view:
-            return
-
-        rect = self.rect()
-        if not rect.isValid():
-            return
-
-        device_ratio = self.devicePixelRatioF()
-        if device_ratio <= 0:
-            device_ratio = 1.0
-
-        mask_size = QSize(int(rect.width() * device_ratio), int(rect.height() * device_ratio))
-        if not mask_size.isValid():
-            return
-
-        mask_pixmap = QPixmap(mask_size)
-        mask_pixmap.fill(Qt.transparent)
-
-        painter = QPainter(mask_pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(Qt.white)
-        painter.scale(device_ratio, device_ratio)
-        painter.drawRoundedRect(
-            QRectF(0, 0, rect.width(), rect.height()), self._WINDOW_RADIUS, self._WINDOW_RADIUS
-        )
-        painter.end()
-
-        mask_pixmap.setDevicePixelRatio(device_ratio)
-        self.setMask(mask_pixmap.mask())
+        self._background_label.setPixmap(scaled_pixmap)
 
     def _transition_to_full_screen(self) -> None:
         if not self._startup_view:
@@ -296,7 +243,6 @@ class MainWindow(QMainWindow):
             self._background_pixmap = None
 
         self._startup_view = False
-        self.setMask(QRegion())
         self.setAttribute(Qt.WA_TranslucentBackground, False)
         self.setWindowFlag(Qt.FramelessWindowHint, False)
         self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
@@ -318,7 +264,7 @@ class MainWindow(QMainWindow):
 
     def _init_project_view(self, project_widget: QWidget) -> None:
         project_widget.setAttribute(Qt.WA_StyledBackground, True)
-        project_widget.setStyleSheet("background-color: #ffffff;")
+        project_widget.setStyleSheet("background-color: #d9d9d9;")
 
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -354,7 +300,7 @@ class MainWindow(QMainWindow):
 
         self._content_widget = QWidget(project_widget)
         self._content_widget.setAttribute(Qt.WA_StyledBackground, True)
-        self._content_widget.setStyleSheet("background-color: #ffffff;")
+        self._content_widget.setStyleSheet("background-color: #d9d9d9;")
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(16, 16, 16, 16)
         content_layout.setSpacing(16)
@@ -373,7 +319,7 @@ class MainWindow(QMainWindow):
         self._tab_widget = QTabWidget(self._content_widget)
         self._tab_widget.setDocumentMode(True)
         self._tab_widget.setStyleSheet(
-            "QTabWidget::pane { background: #ffffff; border: none; }"
+            "QTabWidget::pane { background: #d9d9d9; border: none; }"
         )
         if tab_bar := self._tab_widget.tabBar():
             tab_bar.hide()
@@ -474,7 +420,7 @@ class MainWindow(QMainWindow):
         chart_view = QChartView(chart)
         chart_view.setRenderHint(QPainter.Antialiasing)
         chart_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        chart_view.setStyleSheet("background-color: #ffffff; border: none;")
+        chart_view.setStyleSheet("background-color: #d9d9d9; border: none;")
 
         return chart_view
 
@@ -509,6 +455,14 @@ class MainWindow(QMainWindow):
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
         if self._startup_view and event.button() == Qt.LeftButton:
+            self._open_create_dialog()
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
+        if self._startup_view and event.key() == Qt.Key_Escape:
+            self.close()
+            event.accept()
+            return
+        super().keyPressEvent(event)
