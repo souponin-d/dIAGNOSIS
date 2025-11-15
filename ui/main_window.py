@@ -96,11 +96,29 @@ class MainWindow(QMainWindow):
         overlay_layout = QVBoxLayout(overlay_widget)
         overlay_layout.setContentsMargins(48, 48, 48, 48)
         overlay_layout.setSpacing(0)
-        overlay_layout.addStretch()
 
         button_container = QWidget(overlay_widget)
         button_container.setAttribute(Qt.WA_StyledBackground, True)
-        button_container.setStyleSheet("background-color: transparent;")
+        button_container.setStyleSheet(
+            """
+            background-color: transparent;
+            QPushButton {
+                background-color: rgba(255, 255, 255, 220);
+                color: #1f1f1f;
+                border: 2px solid #0f4c81;
+                border-radius: 20px;
+                padding: 12px 28px;
+                font-size: 18px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 240);
+            }
+            QPushButton:pressed {
+                background-color: rgba(240, 240, 240, 240);
+            }
+            """
+        )
         button_container.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
@@ -121,11 +139,12 @@ class MainWindow(QMainWindow):
         create_button.clicked.connect(self._open_create_dialog)
         button_layout.addWidget(create_button)
 
-        overlay_layout.addWidget(
-            button_container, alignment=Qt.AlignHCenter | Qt.AlignBottom
-        )
+        overlay_layout.addStretch()
+        overlay_layout.addWidget(button_container, alignment=Qt.AlignHCenter)
+        overlay_layout.addStretch()
 
         layout.addWidget(overlay_widget)
+        overlay_widget.raise_()
         self._startup_button_container = button_container
 
         pixmap = QPixmap(str(self._BACKGROUND_PATH))
