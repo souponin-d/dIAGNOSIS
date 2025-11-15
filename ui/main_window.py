@@ -7,7 +7,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QIcon, QPixmap
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from config import AppConfig
 from ui.dialogs.create_patient_dialog import CreatePatientDialog
@@ -86,7 +86,15 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-        menu_bar.addMenu("Помощь")
+        help_menu = menu_bar.addMenu("Помощь")
+
+        version_action = QAction("Версия...", self)
+        version_action.setEnabled(False)
+        help_menu.addAction(version_action)
+
+        help_action = QAction("Справка", self)
+        help_action.setEnabled(False)
+        help_menu.addAction(help_action)
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
@@ -98,7 +106,7 @@ class MainWindow(QMainWindow):
 
     def _open_create_dialog(self) -> None:
         dialog = CreatePatientDialog(self)
-        if dialog.exec() == dialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self._transition_to_full_screen()
 
     def _update_background_pixmap(self) -> None:
