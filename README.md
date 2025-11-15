@@ -33,6 +33,8 @@ pip install -r requirements.txt
 python main.py
 ```
 
+> **Важно.** На текущем этапе проект не требует отдельной компиляции или сборки. Запускайте `main.py` напрямую (например, через конфигурацию Run/Debug в PyCharm), чтобы работать с приложением в режиме отладки.
+
 The application opens the main window with a patient form and results view. Press the **Проанализировать** button to trigger the stub analysis executed in a background thread.
 
 ## Future development

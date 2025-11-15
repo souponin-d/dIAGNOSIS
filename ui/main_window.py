@@ -31,6 +31,7 @@ class MainWindow(QMainWindow):
         self._application = application
         self._analysis_service: AnalysisService = get_analysis_service(config)
         self._analysis_worker: Optional[AnalysisWorker] = None
+        self._toolbar: Optional[MainToolbar] = None
 
         self.setWindowTitle("dIAGNOSIS")
         self.resize(900, 600)
@@ -48,8 +49,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._patient_form, 1)
         layout.addWidget(self._results_view, 1)
 
-        toolbar = MainToolbar(self)
-        self.addToolBar(Qt.TopToolBarArea, toolbar)
+        self._toolbar = MainToolbar(self)
+        self._toolbar.settings_requested.connect(self.open_settings)
+        self.addToolBar(Qt.TopToolBarArea, self._toolbar)
         self._patient_form.analyze_requested.connect(self._start_analysis)
 
     def _start_analysis(self, payload: dict) -> None:
