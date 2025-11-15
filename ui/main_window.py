@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCharts import QChart, QChartView, QScatterSeries
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPointF, QRectF, Qt
-from PySide6.QtGui import QAction, QIcon, QPainter, QPainterPath, QPixmap, QRegion
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QRectF, QSize, Qt, QWIDGETSIZE_MAX
+from PySide6.QtGui import QAction, QIcon, QMouseEvent, QPainter, QPixmap, QRegion
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -33,6 +33,7 @@ class MainWindow(QMainWindow):
     _ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "logo.png"
     _MENU_EXPANDED_WIDTH = 240
     _WINDOW_RADIUS = 40
+    _ILLUSTRATION_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "logo.png"
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
@@ -43,7 +44,9 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(str(self._ICON_PATH)))
         self.resize(720, 480)
         self.setWindowFlag(Qt.FramelessWindowHint, True)
+        self.setWindowFlag(Qt.WindowMaximizeButtonHint, False)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(self.size())
 
         self._background_label: QLabel | None = None
         self._background_pixmap: QPixmap | None = None
@@ -55,6 +58,8 @@ class MainWindow(QMainWindow):
         self._tab_widget: QTabWidget | None = None
         self._section_pages: dict[str, QWidget] = {}
         self._startup_view = True
+        self._drag_position: QPoint | None = None
+        self._illustration_label: QLabel | None = None
 
         self._init_ui()
         self._center_on_screen()
@@ -111,6 +116,18 @@ class MainWindow(QMainWindow):
         buttons_layout.addWidget(close_button)
 
         content_layout.addLayout(buttons_layout)
+        content_layout.addStretch()
+
+        illustration_label = QLabel(content_widget)
+        illustration_label.setAlignment(Qt.AlignCenter)
+        illustration_label.setAttribute(Qt.WA_TranslucentBackground, True)
+        illustration_pixmap = QPixmap(str(self._ILLUSTRATION_PATH))
+        if not illustration_pixmap.isNull():
+            illustration_label.setPixmap(
+                illustration_pixmap.scaled(320, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        content_layout.addWidget(illustration_label)
+        self._illustration_label = illustration_label
         content_layout.addStretch()
 
         pixmap = QPixmap(str(self._BACKGROUND_PATH))
@@ -238,10 +255,29 @@ class MainWindow(QMainWindow):
         if not rect.isValid():
             return
 
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(rect), self._WINDOW_RADIUS, self._WINDOW_RADIUS)
-        region = QRegion(path.toFillPolygon().toPolygon())
-        self.setMask(region)
+        device_ratio = self.devicePixelRatioF()
+        if device_ratio <= 0:
+            device_ratio = 1.0
+
+        mask_size = QSize(int(rect.width() * device_ratio), int(rect.height() * device_ratio))
+        if not mask_size.isValid():
+            return
+
+        mask_pixmap = QPixmap(mask_size)
+        mask_pixmap.fill(Qt.transparent)
+
+        painter = QPainter(mask_pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(Qt.white)
+        painter.scale(device_ratio, device_ratio)
+        painter.drawRoundedRect(
+            QRectF(0, 0, rect.width(), rect.height()), self._WINDOW_RADIUS, self._WINDOW_RADIUS
+        )
+        painter.end()
+
+        mask_pixmap.setDevicePixelRatio(device_ratio)
+        self.setMask(mask_pixmap.mask())
 
     def _transition_to_full_screen(self) -> None:
         if not self._startup_view:
@@ -257,6 +293,9 @@ class MainWindow(QMainWindow):
         self.setMask(QRegion())
         self.setAttribute(Qt.WA_TranslucentBackground, False)
         self.setWindowFlag(Qt.FramelessWindowHint, False)
+        self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
         self.show()
 
         previous_central_widget = self.centralWidget()
@@ -330,6 +369,8 @@ class MainWindow(QMainWindow):
         self._tab_widget.setStyleSheet(
             "QTabWidget::pane { background: #ffffff; border: none; }"
         )
+        if tab_bar := self._tab_widget.tabBar():
+            tab_bar.hide()
         content_layout.addWidget(self._tab_widget, 1)
 
         info_tab = QWidget(self._tab_widget)
@@ -430,3 +471,38 @@ class MainWindow(QMainWindow):
         chart_view.setStyleSheet("background-color: #ffffff; border: none;")
 
         return chart_view
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        if self._startup_view and event.button() == Qt.LeftButton:
+            widget = self.childAt(event.position().toPoint())
+            while widget is not None:
+                if isinstance(widget, (QPushButton, QToolButton)):
+                    break
+                widget = widget.parentWidget()
+            else:
+                self._drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        if (
+            self._startup_view
+            and self._drag_position is not None
+            and event.buttons() & Qt.LeftButton
+        ):
+            self.move(event.globalPosition().toPoint() - self._drag_position)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        if self._startup_view and event.button() == Qt.LeftButton:
+            self._drag_position = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        if self._startup_view and event.button() == Qt.LeftButton:
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
