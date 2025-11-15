@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
     _MENU_EXPANDED_WIDTH = 240
     _CLOSE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "close_back.png"
     _CREATE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "create_back.png"
+    _MORE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "more_back.png"
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
@@ -63,6 +64,9 @@ class MainWindow(QMainWindow):
         self._menu_toggle_button: QToolButton | None = None
         self._tab_widget: QTabWidget | None = None
         self._section_pages: dict[str, QWidget] = {}
+        self._section_buttons: dict[str, QPushButton] = {}
+        self._header_label: QLabel | None = None
+        self._current_section: str | None = None
         self._startup_view = True
         self._drag_position: QPoint | None = None
         self._startup_button_container: QWidget | None = None
@@ -118,13 +122,7 @@ class MainWindow(QMainWindow):
             }
             """
         )
-        button_container.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
-        )
-        button_layout = QHBoxLayout(button_container)
-        button_layout.setContentsMargins(0, 0, 0, 24)
-        button_layout.setSpacing(24)
-        button_layout.setAlignment(Qt.AlignCenter)
+        button_container.setFixedSize(520, 180)
 
         close_button = QPushButton(button_container)
         close_button.setCursor(Qt.PointingHandCursor)
@@ -132,7 +130,7 @@ class MainWindow(QMainWindow):
         close_button.setToolTip("Закрыть")
         self._set_startup_button_icon(close_button, self._CLOSE_ICON_PATH)
         close_button.clicked.connect(self.close)
-        button_layout.addWidget(close_button)
+        close_button.move(40, 60)
 
         create_button = QPushButton(button_container)
         create_button.setCursor(Qt.PointingHandCursor)
@@ -140,7 +138,14 @@ class MainWindow(QMainWindow):
         create_button.setToolTip("Создать проект")
         self._set_startup_button_icon(create_button, self._CREATE_ICON_PATH)
         create_button.clicked.connect(self._open_create_dialog)
-        button_layout.addWidget(create_button)
+        create_button.move(200, 60)
+
+        more_button = QPushButton(button_container)
+        more_button.setCursor(Qt.PointingHandCursor)
+        more_button.setFlat(True)
+        more_button.setToolTip("Дополнительно")
+        self._set_startup_button_icon(more_button, self._MORE_ICON_PATH)
+        more_button.move(360, 60)
 
         overlay_layout.addStretch()
         overlay_layout.addWidget(button_container, alignment=Qt.AlignHCenter)
@@ -364,7 +369,7 @@ class MainWindow(QMainWindow):
         self._menu_widget = QWidget(project_widget)
         self._menu_widget.setMinimumWidth(0)
         self._menu_widget.setMaximumWidth(0)
-        self._menu_widget.setStyleSheet("background-color: #f1f1f1;")
+        self._menu_widget.setStyleSheet("background-color: #1a1a1a;")
 
         menu_layout = QVBoxLayout()
         menu_layout.setContentsMargins(16, 32, 16, 16)
@@ -373,16 +378,18 @@ class MainWindow(QMainWindow):
 
         sections = ("Информация", "Терапия", "Прогноз")
         self._section_pages = {}
+        self._section_buttons = {}
 
         for section in sections:
             section_button = QPushButton(section, self._menu_widget)
             section_button.setCursor(Qt.PointingHandCursor)
-            section_button.setStyleSheet("text-align: left; padding: 8px 12px;")
+            section_button.setStyleSheet(self._menu_button_style(False))
             section_button.setFlat(True)
             section_button.clicked.connect(
                 lambda _checked=False, name=section: self._activate_section(name)
             )
             menu_layout.addWidget(section_button)
+            self._section_buttons[section] = section_button
 
         menu_layout.addStretch()
 
@@ -398,13 +405,28 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self._content_widget, 1)
 
-        self._menu_toggle_button = QToolButton(self._content_widget)
+        top_bar = QWidget(self._content_widget)
+        top_bar.setAttribute(Qt.WA_StyledBackground, True)
+        top_layout = QHBoxLayout()
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(12)
+        top_bar.setLayout(top_layout)
+
+        self._menu_toggle_button = QToolButton(top_bar)
         self._menu_toggle_button.setText("☰")
         self._menu_toggle_button.setToolTip("Меню")
         self._menu_toggle_button.setCheckable(True)
         self._menu_toggle_button.setFixedSize(40, 40)
         self._menu_toggle_button.clicked.connect(self._toggle_menu)
-        content_layout.addWidget(self._menu_toggle_button, alignment=Qt.AlignLeft)
+        top_layout.addWidget(self._menu_toggle_button)
+
+        self._header_label = QLabel("", top_bar)
+        self._header_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._header_label.setStyleSheet("font-size: 20px; font-weight: 600; color: #2b2b2b;")
+        top_layout.addWidget(self._header_label)
+        top_layout.addStretch()
+
+        content_layout.addWidget(top_bar)
 
         self._tab_widget = QTabWidget(self._content_widget)
         self._tab_widget.setDocumentMode(True)
@@ -413,9 +435,10 @@ class MainWindow(QMainWindow):
         )
         if tab_bar := self._tab_widget.tabBar():
             tab_bar.hide()
+        self._tab_widget.currentChanged.connect(self._handle_tab_changed)
         content_layout.addWidget(self._tab_widget, 1)
 
-        info_tab, info_layout = self._create_tab_with_header("Информация")
+        info_tab, info_layout = self._create_tab()
 
         chart_view = self._create_information_chart()
         info_layout.addWidget(chart_view, 1)
@@ -424,7 +447,7 @@ class MainWindow(QMainWindow):
         self._section_pages["Информация"] = info_tab
 
         for section in sections[1:]:
-            section_tab, section_layout = self._create_tab_with_header(section)
+            section_tab, section_layout = self._create_tab()
             section_label = QLabel("Раздел в разработке", section_tab)
             section_label.setAlignment(Qt.AlignCenter)
             section_label.setStyleSheet("font-size: 18px; color: #444;")
@@ -439,19 +462,48 @@ class MainWindow(QMainWindow):
         self._menu_animation.setEasingCurve(QEasingCurve.InOutCubic)
         self._menu_expanded = False
 
-    def _create_tab_with_header(self, title: str) -> tuple[QWidget, QVBoxLayout]:
+        if sections:
+            self._update_active_section(sections[0])
+
+    def _create_tab(self) -> tuple[QWidget, QVBoxLayout]:
         tab = QWidget(self._tab_widget)
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        header_label = QLabel(title, tab)
-        header_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        header_label.setStyleSheet("font-size: 20px; font-weight: 600; color: #2b2b2b;")
-        layout.addWidget(header_label)
-
         tab.setLayout(layout)
         return tab, layout
+
+    def _menu_button_style(self, active: bool) -> str:
+        if active:
+            return (
+                """
+                QPushButton {
+                    background-color: #f0f0f0;
+                    color: #1a1a1a;
+                    border: none;
+                    text-align: left;
+                    padding: 10px 14px;
+                    border-radius: 6px;
+                    font-weight: 600;
+                }
+                """
+            )
+        return (
+            """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #f0f0f0;
+                border: none;
+                text-align: left;
+                padding: 10px 14px;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+            }
+            """
+        )
 
     def _toggle_menu(self, checked: bool = False) -> None:  # noqa: ARG002 - checked managed manually
         if not self._menu_widget or not self._menu_animation:
@@ -474,6 +526,23 @@ class MainWindow(QMainWindow):
         if self._menu_toggle_button:
             self._menu_toggle_button.setChecked(self._menu_expanded)
 
+    def _handle_tab_changed(self, index: int) -> None:
+        if not self._tab_widget:
+            return
+
+        section = self._tab_widget.tabText(index)
+        if section:
+            self._update_active_section(section)
+
+    def _update_active_section(self, section: str) -> None:
+        self._current_section = section
+
+        if self._header_label:
+            self._header_label.setText(section)
+
+        for name, button in self._section_buttons.items():
+            button.setStyleSheet(self._menu_button_style(name == section))
+
     def _activate_section(self, section: str) -> None:
         if not self._tab_widget:
             return
@@ -485,6 +554,7 @@ class MainWindow(QMainWindow):
         index = self._tab_widget.indexOf(page)
         if index != -1:
             self._tab_widget.setCurrentIndex(index)
+            self._update_active_section(section)
 
     def _create_information_chart(self) -> QChartView:
         series = QScatterSeries()
