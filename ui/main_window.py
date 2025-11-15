@@ -57,52 +57,81 @@ class MainWindow(QMainWindow):
         self._startup_view = True
 
         self._init_ui()
+        self._center_on_screen()
 
     def _init_ui(self) -> None:
         central_widget = QWidget(self)
         central_widget.setContentsMargins(0, 0, 0, 0)
+        central_widget.setAttribute(Qt.WA_StyledBackground, True)
+        central_widget.setStyleSheet("background-color: transparent;")
         self.setCentralWidget(central_widget)
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        central_widget.setLayout(layout)
-
-        buttons_layout = QHBoxLayout()
-        buttons_layout.setContentsMargins(24, 24, 24, 0)
-        buttons_layout.setSpacing(12)
-        buttons_layout.addStretch()
-
-        create_button = QPushButton("Создать", central_widget)
-        create_button.setCursor(Qt.PointingHandCursor)
-        create_button.setFixedHeight(36)
-        create_button.clicked.connect(self._open_create_dialog)
-        buttons_layout.addWidget(create_button)
-
-        close_button = QPushButton("Х", central_widget)
-        close_button.setCursor(Qt.PointingHandCursor)
-        close_button.setFixedSize(36, 36)
-        close_button.clicked.connect(self.close)
-        buttons_layout.addWidget(close_button)
-
-        layout.addLayout(buttons_layout)
-
-        self._background_label = QLabel(self)
+        self._background_label = QLabel(central_widget)
         self._background_label.setAlignment(Qt.AlignCenter)
         self._background_label.setContentsMargins(0, 0, 0, 0)
         self._background_label.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
+        self._background_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._background_label.lower()
+
+        content_widget = QWidget(central_widget)
+        content_widget.setObjectName("startupContent")
+        content_widget.setAttribute(Qt.WA_StyledBackground, True)
+        content_widget.setStyleSheet(
+            "#startupContent { background-color: rgba(255, 255, 255, 235); border-radius: 40px; }"
+        )
+
+        layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(content_widget)
+
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        content_widget.setLayout(content_layout)
+
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setContentsMargins(24, 24, 24, 0)
+        buttons_layout.setSpacing(12)
+        buttons_layout.addStretch()
+
+        create_button = QPushButton("Создать", content_widget)
+        create_button.setCursor(Qt.PointingHandCursor)
+        create_button.setFixedHeight(36)
+        create_button.clicked.connect(self._open_create_dialog)
+        buttons_layout.addWidget(create_button)
+
+        close_button = QPushButton("Х", content_widget)
+        close_button.setCursor(Qt.PointingHandCursor)
+        close_button.setFixedSize(36, 36)
+        close_button.clicked.connect(self.close)
+        buttons_layout.addWidget(close_button)
+
+        content_layout.addLayout(buttons_layout)
+        content_layout.addStretch()
 
         pixmap = QPixmap(str(self._BACKGROUND_PATH))
         if not pixmap.isNull():
             self._background_pixmap = pixmap
             self._update_background_pixmap()
 
-        layout.addWidget(self._background_label)
-
         self.menuBar().hide()
+
+    def _center_on_screen(self) -> None:
+        app = self._application or QApplication.instance()
+        if not app:
+            return
+
+        screen = app.primaryScreen()
+        if not screen:
+            return
+
+        geometry = self.frameGeometry()
+        geometry.moveCenter(screen.availableGeometry().center())
+        self.move(geometry.topLeft())
 
     def _create_menus(self) -> None:
         menu_bar = self.menuBar()
@@ -163,15 +192,22 @@ class MainWindow(QMainWindow):
             self._transition_to_full_screen()
 
     def _update_background_pixmap(self) -> None:
-        if not self._background_label or not self._background_label.isVisible():
+        if not self._background_label:
             return
 
         if not self._background_pixmap or self._background_pixmap.isNull():
             return
 
-        target_size = self.centralWidget().size()
+        central_widget = self.centralWidget()
+        if central_widget is None:
+            return
+
+        target_size = central_widget.size()
         if not target_size.isValid():
             return
+
+        self._background_label.resize(target_size)
+        self._background_label.move(0, 0)
 
         scaled_pixmap = self._background_pixmap.scaled(
             target_size,
@@ -192,6 +228,7 @@ class MainWindow(QMainWindow):
             cropped_pixmap = scaled_pixmap
 
         self._background_label.setPixmap(cropped_pixmap)
+        self._background_label.lower()
 
     def _apply_window_mask(self) -> None:
         if not self._startup_view:
@@ -212,9 +249,6 @@ class MainWindow(QMainWindow):
 
         if self._background_label:
             self._background_label.hide()
-            layout = self.centralWidget().layout()
-            if layout is not None:
-                layout.removeWidget(self._background_label)
             self._background_label.deleteLater()
             self._background_label = None
             self._background_pixmap = None
@@ -238,6 +272,9 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
     def _init_project_view(self, project_widget: QWidget) -> None:
+        project_widget.setAttribute(Qt.WA_StyledBackground, True)
+        project_widget.setStyleSheet("background-color: #ffffff;")
+
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -271,6 +308,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._menu_widget)
 
         self._content_widget = QWidget(project_widget)
+        self._content_widget.setAttribute(Qt.WA_StyledBackground, True)
+        self._content_widget.setStyleSheet("background-color: #ffffff;")
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(16, 16, 16, 16)
         content_layout.setSpacing(16)
@@ -288,6 +327,9 @@ class MainWindow(QMainWindow):
 
         self._tab_widget = QTabWidget(self._content_widget)
         self._tab_widget.setDocumentMode(True)
+        self._tab_widget.setStyleSheet(
+            "QTabWidget::pane { background: #ffffff; border: none; }"
+        )
         content_layout.addWidget(self._tab_widget, 1)
 
         info_tab = QWidget(self._tab_widget)
@@ -379,9 +421,12 @@ class MainWindow(QMainWindow):
         chart.createDefaultAxes()
         chart.setTitle("Измеренные показатели")
         chart.legend().hide()
+        chart.setBackgroundVisible(False)
+        chart.setPlotAreaBackgroundVisible(False)
 
         chart_view = QChartView(chart)
         chart_view.setRenderHint(QPainter.Antialiasing)
         chart_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        chart_view.setStyleSheet("background-color: #ffffff; border: none;")
 
         return chart_view
