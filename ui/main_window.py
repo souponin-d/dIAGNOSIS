@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from config import AppConfig
@@ -17,6 +17,7 @@ class MainWindow(QMainWindow):
     """Primary window displaying the start screen with background and menu."""
 
     _BACKGROUND_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "background.png"
+    _ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "logo.png"
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
@@ -24,9 +25,11 @@ class MainWindow(QMainWindow):
         self._application = application
 
         self.setWindowTitle("dIAGNOSIS")
-        self.setFixedSize(1920, 1080)
+        self.setWindowIcon(QIcon(str(self._ICON_PATH)))
+        self.resize(720, 480)
 
         self._background_label: QLabel | None = None
+        self._background_pixmap: QPixmap | None = None
 
         self._init_ui()
         self._create_menus()
@@ -47,7 +50,8 @@ class MainWindow(QMainWindow):
 
         pixmap = QPixmap(str(self._BACKGROUND_PATH))
         if not pixmap.isNull():
-            self._background_label.setPixmap(pixmap)
+            self._background_pixmap = pixmap
+            self._update_background_pixmap()
 
         layout.addWidget(self._background_label, alignment=Qt.AlignCenter)
 
@@ -84,6 +88,44 @@ class MainWindow(QMainWindow):
 
         menu_bar.addMenu("Помощь")
 
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self._update_background_pixmap()
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._update_background_pixmap()
+
     def _open_create_dialog(self) -> None:
         dialog = CreatePatientDialog(self)
-        dialog.exec()
+        if dialog.exec() == dialog.Accepted:
+            self._transition_to_full_screen()
+
+    def _update_background_pixmap(self) -> None:
+        if not self._background_label or not self._background_label.isVisible():
+            return
+
+        if not self._background_pixmap or self._background_pixmap.isNull():
+            return
+
+        target_size = self.centralWidget().size()
+        if not target_size.isValid():
+            return
+
+        scaled_pixmap = self._background_pixmap.scaled(
+            target_size,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self._background_label.setPixmap(scaled_pixmap)
+
+    def _transition_to_full_screen(self) -> None:
+        if self._background_label:
+            self._background_label.hide()
+            layout = self.centralWidget().layout()
+            if layout is not None:
+                layout.removeWidget(self._background_label)
+            self._background_label = None
+            self._background_pixmap = None
+
+        self.showFullScreen()
