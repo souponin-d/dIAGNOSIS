@@ -23,6 +23,11 @@ from PySide6.QtWidgets import (
     QWIDGETSIZE_MAX,
 )
 
+try:
+    from PySide6.QtWidgets import QWIDGETSIZE_MAX
+except ImportError:  # pragma: no cover - fallback for PySide6 versions without the constant
+    QWIDGETSIZE_MAX = (1 << 24) - 1
+
 from config import AppConfig
 from ui.dialogs.create_patient_dialog import CreatePatientDialog
 
