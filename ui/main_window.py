@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCharts import QChart, QChartView, QScatterSeries
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QRectF, QSize, Qt, QWIDGETSIZE_MAX
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QAction, QIcon, QMouseEvent, QPainter, QPixmap, QRegion
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
     QWidget,
+    QWIDGETSIZE_MAX,
 )
 
 from config import AppConfig
