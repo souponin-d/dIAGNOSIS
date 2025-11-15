@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
-from PySide6.QtGui import QAction, QIcon, QPixmap
+from PySide6.QtCharts import QChart, QChartView, QScatterSeries
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPointF, QRectF, Qt
+from PySide6.QtGui import QAction, QIcon, QPainter, QPainterPath, QPixmap, QRegion
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -14,7 +15,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QSizePolicy,
     QToolButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -29,6 +32,7 @@ class MainWindow(QMainWindow):
     _BACKGROUND_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "background.png"
     _ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "logo.png"
     _MENU_EXPANDED_WIDTH = 240
+    _WINDOW_RADIUS = 40
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
@@ -38,6 +42,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("dIAGNOSIS")
         self.setWindowIcon(QIcon(str(self._ICON_PATH)))
         self.resize(720, 480)
+        self.setWindowFlag(Qt.FramelessWindowHint, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
 
         self._background_label: QLabel | None = None
         self._background_pixmap: QPixmap | None = None
@@ -46,9 +52,11 @@ class MainWindow(QMainWindow):
         self._menu_animation: QPropertyAnimation | None = None
         self._menu_expanded = False
         self._menu_toggle_button: QToolButton | None = None
+        self._tab_widget: QTabWidget | None = None
+        self._section_pages: dict[str, QWidget] = {}
+        self._startup_view = True
 
         self._init_ui()
-        self._create_menus()
 
     def _init_ui(self) -> None:
         central_widget = QWidget(self)
@@ -60,19 +68,46 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
         central_widget.setLayout(layout)
 
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setContentsMargins(24, 24, 24, 0)
+        buttons_layout.setSpacing(12)
+        buttons_layout.addStretch()
+
+        create_button = QPushButton("Создать", central_widget)
+        create_button.setCursor(Qt.PointingHandCursor)
+        create_button.setFixedHeight(36)
+        create_button.clicked.connect(self._open_create_dialog)
+        buttons_layout.addWidget(create_button)
+
+        close_button = QPushButton("Х", central_widget)
+        close_button.setCursor(Qt.PointingHandCursor)
+        close_button.setFixedSize(36, 36)
+        close_button.clicked.connect(self.close)
+        buttons_layout.addWidget(close_button)
+
+        layout.addLayout(buttons_layout)
+
         self._background_label = QLabel(self)
         self._background_label.setAlignment(Qt.AlignCenter)
         self._background_label.setContentsMargins(0, 0, 0, 0)
+        self._background_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
 
         pixmap = QPixmap(str(self._BACKGROUND_PATH))
         if not pixmap.isNull():
             self._background_pixmap = pixmap
             self._update_background_pixmap()
 
-        layout.addWidget(self._background_label, alignment=Qt.AlignCenter)
+        layout.addWidget(self._background_label)
+
+        self.menuBar().hide()
 
     def _create_menus(self) -> None:
         menu_bar = self.menuBar()
+        menu_bar.clear()
+        menu_bar.show()
 
         file_menu = menu_bar.addMenu("Файл")
 
@@ -115,10 +150,12 @@ class MainWindow(QMainWindow):
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._update_background_pixmap()
+        self._apply_window_mask()
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self._update_background_pixmap()
+        self._apply_window_mask()
 
     def _open_create_dialog(self) -> None:
         dialog = CreatePatientDialog(self)
@@ -156,7 +193,23 @@ class MainWindow(QMainWindow):
 
         self._background_label.setPixmap(cropped_pixmap)
 
+    def _apply_window_mask(self) -> None:
+        if not self._startup_view:
+            return
+
+        rect = self.rect()
+        if not rect.isValid():
+            return
+
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(rect), self._WINDOW_RADIUS, self._WINDOW_RADIUS)
+        region = QRegion(path.toFillPolygon().toPolygon())
+        self.setMask(region)
+
     def _transition_to_full_screen(self) -> None:
+        if not self._startup_view:
+            return
+
         if self._background_label:
             self._background_label.hide()
             layout = self.centralWidget().layout()
@@ -165,6 +218,12 @@ class MainWindow(QMainWindow):
             self._background_label.deleteLater()
             self._background_label = None
             self._background_pixmap = None
+
+        self._startup_view = False
+        self.setMask(QRegion())
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self.setWindowFlag(Qt.FramelessWindowHint, False)
+        self.show()
 
         previous_central_widget = self.centralWidget()
         project_widget = QWidget(self)
@@ -175,6 +234,7 @@ class MainWindow(QMainWindow):
             previous_central_widget.deleteLater()
 
         self._init_project_view(project_widget)
+        self._create_menus()
         self.showMaximized()
 
     def _init_project_view(self, project_widget: QWidget) -> None:
@@ -193,11 +253,17 @@ class MainWindow(QMainWindow):
         menu_layout.setSpacing(12)
         self._menu_widget.setLayout(menu_layout)
 
-        for section in ("Информация", "Терапия", "Прогноз"):
+        sections = ("Информация", "Терапия", "Прогноз")
+        self._section_pages = {}
+
+        for section in sections:
             section_button = QPushButton(section, self._menu_widget)
             section_button.setCursor(Qt.PointingHandCursor)
             section_button.setStyleSheet("text-align: left; padding: 8px 12px;")
             section_button.setFlat(True)
+            section_button.clicked.connect(
+                lambda _checked=False, name=section: self._activate_section(name)
+            )
             menu_layout.addWidget(section_button)
 
         menu_layout.addStretch()
@@ -220,14 +286,36 @@ class MainWindow(QMainWindow):
         self._menu_toggle_button.clicked.connect(self._toggle_menu)
         content_layout.addWidget(self._menu_toggle_button, alignment=Qt.AlignLeft)
 
-        content_layout.addStretch()
+        self._tab_widget = QTabWidget(self._content_widget)
+        self._tab_widget.setDocumentMode(True)
+        content_layout.addWidget(self._tab_widget, 1)
 
-        placeholder_label = QLabel("Выберите раздел из меню", self._content_widget)
-        placeholder_label.setAlignment(Qt.AlignCenter)
-        placeholder_label.setStyleSheet("font-size: 18px; color: #444;")
-        content_layout.addWidget(placeholder_label, alignment=Qt.AlignCenter)
+        info_tab = QWidget(self._tab_widget)
+        info_layout = QVBoxLayout()
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(16)
+        info_tab.setLayout(info_layout)
 
-        content_layout.addStretch()
+        chart_view = self._create_information_chart()
+        info_layout.addWidget(chart_view)
+
+        self._tab_widget.addTab(info_tab, "Информация")
+        self._section_pages["Информация"] = info_tab
+
+        for section in sections[1:]:
+            section_tab = QWidget(self._tab_widget)
+            section_layout = QVBoxLayout()
+            section_layout.setContentsMargins(0, 0, 0, 0)
+            section_layout.setSpacing(16)
+            section_label = QLabel("Раздел в разработке", section_tab)
+            section_label.setAlignment(Qt.AlignCenter)
+            section_label.setStyleSheet("font-size: 18px; color: #444;")
+            section_layout.addStretch()
+            section_layout.addWidget(section_label)
+            section_layout.addStretch()
+            section_tab.setLayout(section_layout)
+            self._tab_widget.addTab(section_tab, section)
+            self._section_pages[section] = section_tab
 
         self._menu_animation = QPropertyAnimation(self._menu_widget, b"maximumWidth", self)
         self._menu_animation.setDuration(250)
@@ -254,3 +342,46 @@ class MainWindow(QMainWindow):
         self._menu_expanded = not self._menu_expanded
         if self._menu_toggle_button:
             self._menu_toggle_button.setChecked(self._menu_expanded)
+
+    def _activate_section(self, section: str) -> None:
+        if not self._tab_widget:
+            return
+
+        page = self._section_pages.get(section)
+        if not page:
+            return
+
+        index = self._tab_widget.indexOf(page)
+        if index != -1:
+            self._tab_widget.setCurrentIndex(index)
+
+    def _create_information_chart(self) -> QChartView:
+        series = QScatterSeries()
+        series.setMarkerSize(12.0)
+        series.setColor(self.palette().highlight().color())
+
+        points = (
+            QPointF(0.0, 2.0),
+            QPointF(1.0, 3.5),
+            QPointF(2.0, 2.8),
+            QPointF(3.0, 4.2),
+            QPointF(4.0, 3.9),
+            QPointF(5.0, 5.1),
+            QPointF(6.0, 4.6),
+            QPointF(7.0, 5.4),
+        )
+
+        for point in points:
+            series.append(point)
+
+        chart = QChart()
+        chart.addSeries(series)
+        chart.createDefaultAxes()
+        chart.setTitle("Измеренные показатели")
+        chart.legend().hide()
+
+        chart_view = QChartView(chart)
+        chart_view.setRenderHint(QPainter.Antialiasing)
+        chart_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        return chart_view
