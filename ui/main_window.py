@@ -39,6 +39,8 @@ class MainWindow(QMainWindow):
     _BACKGROUND_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "background.png"
     _ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "logo.png"
     _MENU_EXPANDED_WIDTH = 240
+    _CLOSE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "close_back.png"
+    _CREATE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "create_back.png"
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
@@ -103,19 +105,16 @@ class MainWindow(QMainWindow):
             """
             background-color: transparent;
             QPushButton {
-                background-color: rgba(255, 255, 255, 220);
-                color: #1f1f1f;
-                border: 2px solid #0f4c81;
-                border-radius: 20px;
-                padding: 12px 28px;
-                font-size: 18px;
-                font-weight: 600;
+                background-color: transparent;
+                border: none;
             }
             QPushButton:hover {
-                background-color: rgba(255, 255, 255, 240);
+                background-color: rgba(255, 255, 255, 60);
+                border-radius: 16px;
             }
             QPushButton:pressed {
-                background-color: rgba(240, 240, 240, 240);
+                background-color: rgba(0, 0, 0, 40);
+                border-radius: 16px;
             }
             """
         )
@@ -127,15 +126,19 @@ class MainWindow(QMainWindow):
         button_layout.setSpacing(24)
         button_layout.setAlignment(Qt.AlignCenter)
 
-        close_button = QPushButton("Х", button_container)
+        close_button = QPushButton(button_container)
         close_button.setCursor(Qt.PointingHandCursor)
-        close_button.setFixedWidth(100)
+        close_button.setFlat(True)
+        close_button.setToolTip("Закрыть")
+        self._set_startup_button_icon(close_button, self._CLOSE_ICON_PATH)
         close_button.clicked.connect(self.close)
         button_layout.addWidget(close_button)
 
-        create_button = QPushButton("Создать", button_container)
+        create_button = QPushButton(button_container)
         create_button.setCursor(Qt.PointingHandCursor)
-        create_button.setFixedWidth(160)
+        create_button.setFlat(True)
+        create_button.setToolTip("Создать проект")
+        self._set_startup_button_icon(create_button, self._CREATE_ICON_PATH)
         create_button.clicked.connect(self._open_create_dialog)
         button_layout.addWidget(create_button)
 
@@ -154,6 +157,28 @@ class MainWindow(QMainWindow):
             self._update_background_pixmap()
 
         self.menuBar().hide()
+
+    def _set_startup_button_icon(self, button: QPushButton, icon_path: Path) -> None:
+        pixmap = QPixmap(str(icon_path))
+        if pixmap.isNull():
+            return
+
+        original_size = pixmap.size()
+        if not original_size.isValid():
+            return
+
+        scaled_width = max(int(original_size.width() / 2.5), 1)
+        scaled_height = max(int(original_size.height() / 2.5), 1)
+        scaled_pixmap = pixmap.scaled(
+            QSize(scaled_width, scaled_height),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+
+        icon = QIcon(scaled_pixmap)
+        button.setIcon(icon)
+        button.setIconSize(scaled_pixmap.size())
+        button.setFixedSize(scaled_pixmap.size())
 
     def _center_on_screen(self) -> None:
         app = self._application or QApplication.instance()
@@ -390,30 +415,22 @@ class MainWindow(QMainWindow):
             tab_bar.hide()
         content_layout.addWidget(self._tab_widget, 1)
 
-        info_tab = QWidget(self._tab_widget)
-        info_layout = QVBoxLayout()
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(16)
-        info_tab.setLayout(info_layout)
+        info_tab, info_layout = self._create_tab_with_header("Информация")
 
         chart_view = self._create_information_chart()
-        info_layout.addWidget(chart_view)
+        info_layout.addWidget(chart_view, 1)
 
         self._tab_widget.addTab(info_tab, "Информация")
         self._section_pages["Информация"] = info_tab
 
         for section in sections[1:]:
-            section_tab = QWidget(self._tab_widget)
-            section_layout = QVBoxLayout()
-            section_layout.setContentsMargins(0, 0, 0, 0)
-            section_layout.setSpacing(16)
+            section_tab, section_layout = self._create_tab_with_header(section)
             section_label = QLabel("Раздел в разработке", section_tab)
             section_label.setAlignment(Qt.AlignCenter)
             section_label.setStyleSheet("font-size: 18px; color: #444;")
             section_layout.addStretch()
-            section_layout.addWidget(section_label)
+            section_layout.addWidget(section_label, alignment=Qt.AlignCenter)
             section_layout.addStretch()
-            section_tab.setLayout(section_layout)
             self._tab_widget.addTab(section_tab, section)
             self._section_pages[section] = section_tab
 
@@ -421,6 +438,20 @@ class MainWindow(QMainWindow):
         self._menu_animation.setDuration(250)
         self._menu_animation.setEasingCurve(QEasingCurve.InOutCubic)
         self._menu_expanded = False
+
+    def _create_tab_with_header(self, title: str) -> tuple[QWidget, QVBoxLayout]:
+        tab = QWidget(self._tab_widget)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        header_label = QLabel(title, tab)
+        header_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        header_label.setStyleSheet("font-size: 20px; font-weight: 600; color: #2b2b2b;")
+        layout.addWidget(header_label)
+
+        tab.setLayout(layout)
+        return tab, layout
 
     def _toggle_menu(self, checked: bool = False) -> None:  # noqa: ARG002 - checked managed manually
         if not self._menu_widget or not self._menu_animation:
@@ -479,13 +510,15 @@ class MainWindow(QMainWindow):
         chart.createDefaultAxes()
         chart.setTitle("Измеренные показатели")
         chart.legend().hide()
-        chart.setBackgroundVisible(False)
-        chart.setPlotAreaBackgroundVisible(False)
+        chart.setBackgroundVisible(True)
+        chart.setBackgroundBrush(Qt.white)
+        chart.setPlotAreaBackgroundBrush(Qt.white)
+        chart.setPlotAreaBackgroundVisible(True)
 
         chart_view = QChartView(chart)
         chart_view.setRenderHint(QPainter.Antialiasing)
         chart_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        chart_view.setStyleSheet("background-color: #d9d9d9; border: none;")
+        chart_view.setStyleSheet("background-color: white; border: none;")
 
         return chart_view
 
