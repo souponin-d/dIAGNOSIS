@@ -27,10 +27,9 @@ class CreatePatientDialog(QDialog):
     """Modal dialog providing input fields for patient data."""
 
     _FIELD_LABELS = [
-        "Статус рецепторов эстрогена",
-        "Статус рецепторов прогестерона",
+        "Статус рецепторов:",
         "Статус HER2",
-        "Мутация в генах BRCA1/2",
+        "Мутации в генах BRCA1/2",
         "Уровень Ki-67 (%)",
         "Размер опухоли до лечения (см)",
         "Гистологическая градация опухоли (1-3)",
@@ -127,10 +126,14 @@ class CreatePatientDialog(QDialog):
     def collected_data(self) -> Dict[str, str]:
         """Return the current values from the input fields."""
 
-        return {
-            label: self._read_value(self._inputs[label])
-            for label in self._field_order
-        }
+        data: Dict[str, str] = {}
+        for label in self._field_order:
+            value = self._read_value(self._inputs[label])
+            if isinstance(value, dict):
+                data.update(value)
+            else:
+                data[label] = value
+        return data
 
     def _register_input(self, label: str, widget: QWidget) -> None:
         self._inputs[label] = widget
@@ -230,6 +233,10 @@ class CreatePatientDialog(QDialog):
         return "лет"
 
     def _create_field_widget(self, label_text: str) -> QWidget:
+        if label_text == "Статус рецепторов:":
+            return ReceptorStatusField(self)
+        if label_text in {"Статус HER2", "Мутации в генах BRCA1/2"}:
+            return PositiveNegativeField(self)
         if label_text == "T":
             return self._create_t_field()
         if label_text == "N":
@@ -260,7 +267,8 @@ class CreatePatientDialog(QDialog):
         ]
         combo = QComboBox(self)
         combo.addItems(options)
-        combo.setMaximumWidth(280)
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        combo.view().setTextElideMode(Qt.ElideNone)
         return combo
 
     def _on_sex_changed(self, sex: str) -> None:
@@ -275,7 +283,77 @@ class CreatePatientDialog(QDialog):
             return widget.value()
         if isinstance(widget, NClassificationField):
             return widget.value()
+        if isinstance(widget, PositiveNegativeField):
+            return widget.value()
+        if isinstance(widget, ReceptorStatusField):
+            return widget.value()
         return ""
+
+
+class PositiveNegativeField(QWidget):
+    """Simple + / - selector represented by radio buttons."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        self._button_group = QButtonGroup(self)
+        self._positive = QRadioButton("+", self)
+        self._negative = QRadioButton("-", self)
+        self._button_group.addButton(self._positive)
+        self._button_group.addButton(self._negative)
+
+        layout.addWidget(self._positive)
+        layout.addWidget(self._negative)
+        layout.addStretch(1)
+
+        self.setLayout(layout)
+
+    def value(self) -> str:
+        if self._positive.isChecked():
+            return "+"
+        if self._negative.isChecked():
+            return "-"
+        return ""
+
+
+class ReceptorStatusField(QWidget):
+    """Combined widget holding estrogen and progesterone receptor status."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self._estrogen_selector = PositiveNegativeField(self)
+        self._progesterone_selector = PositiveNegativeField(self)
+
+        layout.addLayout(self._build_row("Эстроген", self._estrogen_selector))
+        layout.addLayout(self._build_row("Прогестерон", self._progesterone_selector))
+
+        self.setLayout(layout)
+
+    def _build_row(self, label_text: str, selector: PositiveNegativeField) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+
+        label = QLabel(label_text, self)
+        row.addWidget(label)
+        row.addWidget(selector)
+        row.addStretch(1)
+        return row
+
+    def value(self) -> Dict[str, str]:
+        return {
+            "Статус рецепторов эстрогена": self._estrogen_selector.value(),
+            "Статус рецепторов прогестерона": self._progестерон_selector.value(),
+        }
 
 
 class MenopauseStatusField(QWidget):
@@ -387,9 +465,11 @@ class NClassificationField(QWidget):
 
         self._c_combo = QComboBox(self)
         self._c_combo.addItems(self._C_OPTIONS)
+        self._configure_combo(self._c_combo)
 
         self._p_combo = QComboBox(self)
         self._p_combo.addItems(self._P_OPTIONS)
+        self._configure_combo(self._p_combo)
 
         self._stack.addWidget(self._c_combo)
         self._stack.addWidget(self._p_combo)
@@ -410,3 +490,8 @@ class NClassificationField(QWidget):
         if self._stack.currentIndex() == 0:
             return self._c_combo.currentText()
         return self._p_combo.currentText()
+
+    @staticmethod
+    def _configure_combo(combo: QComboBox) -> None:
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        combo.view().setTextElideMode(Qt.ElideNone)
