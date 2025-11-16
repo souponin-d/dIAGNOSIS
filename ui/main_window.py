@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCharts import QChart, QChartView, QScatterSeries
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QPoint, QPointF, QSize, Qt
-from PySide6.QtGui import QAction, QIcon, QKeyEvent, QMouseEvent, QPainter, QPixmap
+from PySide6.QtCore import QEvent, QEasingCurve, QMargins, QPropertyAnimation, QPoint, QPointF, QSize, Qt
+from PySide6.QtGui import QAction, QIcon, QKeyEvent, QMouseEvent, QPainter, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QGraphicsColorizeEffect,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -30,6 +31,43 @@ except ImportError:  # pragma: no cover - fallback for PySide6 versions without 
 
 from config import AppConfig
 from ui.dialogs.create_patient_dialog import CreatePatientDialog
+
+
+class HoverIconButton(QPushButton):
+    """Push button that lightens its icon when hovered."""
+
+    def __init__(
+        self,
+        *args,
+        hover_strength: float = 0.35,
+        animation_duration: int = 150,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._hover_strength = hover_strength
+        self._hover_animation = QPropertyAnimation(self)
+        self._hover_effect = QGraphicsColorizeEffect(self)
+        self._hover_effect.setColor(Qt.white)
+        self._hover_effect.setStrength(0.0)
+        self.setGraphicsEffect(self._hover_effect)
+
+        self._hover_animation.setTargetObject(self._hover_effect)
+        self._hover_animation.setPropertyName(b"strength")
+        self._hover_animation.setDuration(animation_duration)
+        self._hover_animation.setEasingCurve(QEasingCurve.InOutQuad)
+
+    def enterEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        self._animate_hover(self._hover_strength)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:  # type: ignore[override]
+        self._animate_hover(0.0)
+        super().leaveEvent(event)
+
+    def _animate_hover(self, value: float) -> None:
+        self._hover_animation.stop()
+        self._hover_animation.setEndValue(value)
+        self._hover_animation.start()
 
 
 class MainWindow(QMainWindow):
@@ -69,6 +107,9 @@ class MainWindow(QMainWindow):
         self._startup_view = True
         self._drag_position: QPoint | None = None
         self._startup_button_container: QWidget | None = None
+        self._close_button: HoverIconButton | None = None
+        self._overlay_widget: QWidget | None = None
+        self._overlay_margins: QMargins | None = None
 
         self._init_ui()
         self._center_on_screen()
@@ -101,6 +142,8 @@ class MainWindow(QMainWindow):
         overlay_layout = QVBoxLayout(overlay_widget)
         overlay_layout.setContentsMargins(48, 48, 48, 48)
         overlay_layout.setSpacing(0)
+        self._overlay_widget = overlay_widget
+        self._overlay_margins = overlay_layout.contentsMargins()
 
         button_container = QWidget(overlay_widget)
         button_container.setAttribute(Qt.WA_StyledBackground, True)
@@ -111,10 +154,6 @@ class MainWindow(QMainWindow):
                 background-color: transparent;
                 border: none;
             }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 60);
-                border-radius: 16px;
-            }
             QPushButton:pressed {
                 background-color: rgba(0, 0, 0, 40);
                 border-radius: 16px;
@@ -123,15 +162,16 @@ class MainWindow(QMainWindow):
         )
         button_container.setFixedSize(780, 700)
 
-        close_button = QPushButton(button_container)
-        close_button.setCursor(Qt.PointingHandCursor)
-        close_button.setFlat(True)
-        close_button.setToolTip("Закрыть")
-        self._set_startup_button_icon(close_button, self._CLOSE_ICON_PATH)
-        close_button.clicked.connect(self.close)
-        close_button.move(638, 0)
+        self._close_button = HoverIconButton(overlay_widget)
+        self._close_button.setCursor(Qt.PointingHandCursor)
+        self._close_button.setFlat(True)
+        self._close_button.setToolTip("Закрыть")
+        self._set_startup_button_icon(self._close_button, self._CLOSE_ICON_PATH)
+        self._close_button.clicked.connect(self.close)
+        self._close_button.raise_()
+        self._position_close_button()
 
-        create_button = QPushButton(button_container)
+        create_button = HoverIconButton(button_container)
         create_button.setCursor(Qt.PointingHandCursor)
         create_button.setFlat(True)
         create_button.setToolTip("Создать проект")
@@ -139,7 +179,7 @@ class MainWindow(QMainWindow):
         create_button.clicked.connect(self._open_create_dialog)
         create_button.move(103, 207)
 
-        more_button = QPushButton(button_container)
+        more_button = HoverIconButton(button_container)
         more_button.setCursor(Qt.PointingHandCursor)
         more_button.setFlat(True)
         more_button.setToolTip("Дополнительно")
@@ -183,6 +223,19 @@ class MainWindow(QMainWindow):
         button.setIcon(icon)
         button.setIconSize(scaled_pixmap.size())
         button.setFixedSize(scaled_pixmap.size())
+
+    def _position_close_button(self) -> None:
+        if not self._close_button:
+            return
+
+        parent = self._close_button.parentWidget()
+        if not parent:
+            return
+
+        margins = self._overlay_margins or QMargins(0, 0, 0, 0)
+        y_offset = max(margins.top() - 40, 0)
+        x_offset = max(parent.width() - self._close_button.width() - margins.right(), 0)
+        self._close_button.move(x_offset, y_offset)
 
     def _center_on_screen(self) -> None:
         app = self._application or QApplication.instance()
@@ -243,10 +296,12 @@ class MainWindow(QMainWindow):
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._update_background_pixmap()
+        self._position_close_button()
 
-    def resizeEvent(self, event) -> None:  # type: ignore[override]
+    def resizeEvent(self, event: QResizeEvent) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self._update_background_pixmap()
+        self._position_close_button()
 
     def _open_create_dialog(self) -> None:
         dialog = CreatePatientDialog(self)
