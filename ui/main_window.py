@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import random
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from PySide6.QtCharts import QCategoryAxis, QChart, QChartView, QLineSeries, QValueAxis
 from PySide6.QtCore import QEvent, QEasingCurve, QMargins, QPropertyAnimation, QPoint, QSize, Qt
@@ -38,6 +37,7 @@ except ImportError:  # pragma: no cover - fallback for PySide6 versions without 
     QWIDGETSIZE_MAX = (1 << 24) - 1
 
 from config import AppConfig
+from services.regression import regression_V_no_treatment
 from ui.dialogs.create_patient_dialog import CreatePatientDialog
 
 
@@ -571,7 +571,8 @@ class MainWindow(QMainWindow):
         left_column_layout.addWidget(self._growth_table)
         left_column_layout.addStretch(1)
 
-        info_columns.addWidget(left_column, 1)
+        left_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        info_columns.addWidget(left_column)
 
         right_column = QWidget(info_tab)
         right_column_layout = QVBoxLayout()
@@ -579,13 +580,18 @@ class MainWindow(QMainWindow):
         right_column_layout.setSpacing(12)
         right_column.setLayout(right_column_layout)
 
+        right_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
         self._growth_chart_view = self._create_growth_chart(right_column)
         right_column_layout.addWidget(self._growth_chart_view, 1)
 
-        info_columns.addWidget(right_column, 1)
+        info_columns.addWidget(right_column)
+        info_columns.setStretch(0, 1)
+        info_columns.setStretch(1, 1)
 
-        self._update_growth_chart_from_table()
         self._refresh_patient_information_view()
+
+        self._recalculate_growth_data()
 
         self._tab_widget.addTab(info_tab, "Информация")
         self._section_pages["Информация"] = info_tab
@@ -713,8 +719,7 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.Stretch)
 
         for column in range(table.columnCount()):
-            value = random.randint(1, 10)
-            item = QTableWidgetItem(str(value))
+            item = QTableWidgetItem("—")
             item.setTextAlignment(Qt.AlignCenter)
             table.setItem(0, column, item)
 
@@ -725,7 +730,7 @@ class MainWindow(QMainWindow):
         chart = QChart()
         chart.addSeries(self._growth_series)
         chart.legend().hide()
-        chart.setTitle("Темпы роста опухоли")
+        chart.setTitle("Оценка изменения объёма опухоли без лечения")
         chart.setBackgroundVisible(True)
         chart.setBackgroundBrush(Qt.white)
         chart.setPlotAreaBackgroundBrush(Qt.white)
@@ -780,6 +785,38 @@ class MainWindow(QMainWindow):
         else:
             self._growth_axis_y.setRange(0.0, 1.0)
 
+    def _recalculate_growth_data(self) -> None:
+        if not self._growth_table:
+            return
+
+        if not self._patient_data:
+            self._set_growth_table_values([])
+            self._update_growth_chart_from_table()
+            return
+
+        values = regression_V_no_treatment(self._patient_data)
+        self._set_growth_table_values(values)
+        self._update_growth_chart_from_table()
+
+    def _set_growth_table_values(self, values: Sequence[float]) -> None:
+        if not self._growth_table:
+            return
+
+        column_count = self._growth_table.columnCount()
+        for column in range(column_count):
+            if column < len(values):
+                numeric_value = values[column]
+                text = f"{numeric_value:.2f}".rstrip("0").rstrip(".")
+            else:
+                text = "—"
+
+            item = self._growth_table.item(0, column)
+            if not item:
+                item = QTableWidgetItem()
+                item.setTextAlignment(Qt.AlignCenter)
+                self._growth_table.setItem(0, column, item)
+            item.setText(text)
+
     def _refresh_patient_information_view(self) -> None:
         if (
             not self._patient_details_form
@@ -797,12 +834,19 @@ class MainWindow(QMainWindow):
         if not self._patient_data:
             self._patient_details_widget.hide()
             self._patient_placeholder_label.show()
+            self._recalculate_growth_data()
             return
 
         for label, value in self._patient_data.items():
             name_label = QLabel(label, self._patient_details_widget)
+            name_label.setWordWrap(True)
             value_label = QLabel(value or "—", self._patient_details_widget)
             value_label.setStyleSheet("font-weight: 600;")
+            value_label.setWordWrap(True)
+            value_label.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Preferred,
+            )
             self._patient_details_form.addRow(name_label, value_label)
 
         stage_value = self._calculate_stage()
@@ -811,6 +855,7 @@ class MainWindow(QMainWindow):
 
         self._patient_placeholder_label.hide()
         self._patient_details_widget.show()
+        self._recalculate_growth_data()
 
     def _calculate_stage(self) -> str:
         if not self._patient_data:
