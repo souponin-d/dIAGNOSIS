@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -122,6 +123,7 @@ class MainWindow(QMainWindow):
         self._patient_placeholder_label: QLabel | None = None
         self._patient_details_widget: QWidget | None = None
         self._patient_details_form: QFormLayout | None = None
+        self._stage_value_label: QLabel | None = None
         self._growth_table: QTableWidget | None = None
         self._growth_chart_view: QChartView | None = None
         self._growth_series: QLineSeries | None = None
@@ -544,6 +546,23 @@ class MainWindow(QMainWindow):
         self._patient_details_widget.hide()
         left_column_layout.addWidget(self._patient_details_widget)
 
+        stage_container = QWidget(left_column)
+        stage_layout = QHBoxLayout()
+        stage_layout.setContentsMargins(0, 0, 0, 0)
+        stage_layout.setSpacing(12)
+        stage_container.setLayout(stage_layout)
+
+        stage_label = QLabel("Стадия:", stage_container)
+        stage_label.setStyleSheet("font-size: 16px;")
+        stage_layout.addWidget(stage_label)
+
+        self._stage_value_label = QLabel("—", stage_container)
+        self._stage_value_label.setStyleSheet("font-size: 24px; font-weight: 600;")
+        stage_layout.addWidget(self._stage_value_label)
+        stage_layout.addStretch(1)
+
+        left_column_layout.addWidget(stage_container)
+
         table_title = QLabel("Динамика наблюдения", left_column)
         table_title.setStyleSheet("font-size: 16px; font-weight: 600;")
         left_column_layout.addWidget(table_title)
@@ -772,6 +791,9 @@ class MainWindow(QMainWindow):
         while self._patient_details_form.rowCount():
             self._patient_details_form.removeRow(0)
 
+        if self._stage_value_label:
+            self._stage_value_label.setText("—")
+
         if not self._patient_data:
             self._patient_details_widget.hide()
             self._patient_placeholder_label.show()
@@ -783,8 +805,94 @@ class MainWindow(QMainWindow):
             value_label.setStyleSheet("font-weight: 600;")
             self._patient_details_form.addRow(name_label, value_label)
 
+        stage_value = self._calculate_stage()
+        if self._stage_value_label:
+            self._stage_value_label.setText(stage_value)
+
         self._patient_placeholder_label.hide()
         self._patient_details_widget.show()
+
+    def _calculate_stage(self) -> str:
+        if not self._patient_data:
+            return "—"
+
+        t_category = self._normalize_category(self._patient_data.get("T", ""), "T")
+        n_category = self._normalize_category(self._patient_data.get("N", ""), "N")
+        m_category = self._normalize_category(self._patient_data.get("M", ""), "M")
+
+        if not (t_category and n_category and m_category):
+            return "—"
+
+        if m_category == "M1":
+            return "IV"
+        if n_category == "N3" and m_category == "M0":
+            return "IIIC"
+
+        rules = [
+            ("Tis", "N0", "M0", "0"),
+            ("T1", "N0", "M0", "IA"),
+            ("T0", "N1mi", "M0", "IB"),
+            ("T1", "N1mi", "M0", "IB"),
+            ("T0", "N1", "M0", "IIA"),
+            ("T1", "N1", "M0", "IIA"),
+            ("T2", "N0", "M0", "IIA"),
+            ("T2", "N1", "M0", "IIB"),
+            ("T3", "N0", "M0", "IIB"),
+            ("T0", "N2", "M0", "IIIA"),
+            ("T1", "N2", "M0", "IIIA"),
+            ("T2", "N2", "M0", "IIIA"),
+            ("T3", "N1", "M0", "IIIA"),
+            ("T3", "N2", "M0", "IIIA"),
+            ("T4", "N0", "M0", "IIIB"),
+            ("T4", "N1", "M0", "IIIB"),
+            ("T4", "N2", "M0", "IIIB"),
+        ]
+
+        for t_rule, n_rule, m_rule, stage in rules:
+            if t_category == t_rule and n_category == n_rule and m_category == m_rule:
+                return stage
+
+        return "—"
+
+    @staticmethod
+    def _normalize_category(value: str, category_type: str) -> str:
+        if not value:
+            return ""
+
+        head = value.split("—", 1)[0].strip()
+        head = head.split(" ", 1)[0].strip()
+
+        if not head:
+            return ""
+
+        if category_type == "T":
+            if head.lower().startswith("tis"):
+                return "Tis"
+            match = re.match(r"(T\\d+)", head)
+            if match:
+                return match.group(1)
+            return head if head.startswith("T") else ""
+
+        if category_type == "N":
+            if head.startswith(("c", "p")) and len(head) > 1:
+                head = head[1:]
+            mi_match = re.match(r"(N\\d+mi)", head)
+            if mi_match:
+                return mi_match.group(1)
+            match = re.match(r"(N\\d+)", head)
+            if match:
+                return match.group(1)
+            return head if head.startswith("N") else ""
+
+        if category_type == "M":
+            if head.startswith(("c", "p")) and len(head) > 1:
+                head = head[1:]
+            match = re.match(r"(M\\d)", head)
+            if match:
+                return match.group(1)
+            return head if head.startswith("M") else ""
+
+        return ""
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
         if self._startup_view and event.button() == Qt.LeftButton:

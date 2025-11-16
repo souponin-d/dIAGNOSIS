@@ -277,13 +277,13 @@ class CreatePatientDialog(QDialog):
             return PositiveNegativeField(self)
         if label_text == "T":
             return self._create_t_field()
+        if label_text == "M":
+            return self._create_m_field()
         if label_text == "N":
             return NClassificationField(self)
 
         input_field = QLineEdit(self)
-        if label_text == "M":
-            input_field.setMaximumWidth(300)
-        elif label_text in {
+        if label_text in {
             "Уровень Ki-67 (%)",
             "Размер опухоли до лечения (см)",
             "Гистологическая градация опухоли (1-3)",
@@ -311,6 +311,22 @@ class CreatePatientDialog(QDialog):
             "T4b — Изъязвление кожи, узелки вокруг опухоли, отёк («апельсиновая корочка»), но не воспалительный рак.",
             "T4c — Сочетание T4a и T4b.",
             "T4d — Воспалительный рак.",
+        ]
+        combo = QComboBox(self)
+        combo.addItems(options)
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        combo.view().setTextElideMode(Qt.ElideNone)
+        combo.setMinimumWidth(360)
+        return combo
+
+    def _create_m_field(self) -> QWidget:
+        options = [
+            "cM — клиническая классификация (до операции)",
+            "cM0 — Нет клинических или радиографических признаков отдалённых метастазов.",
+            "cM0(i+) — Нет клинических или радиографических признаков отдалённых метастазов, но обнаружены опухолевые клетки или их комплексы размером не более 0,2 мм в крови, костном мозге или других не регионарных тканях при отсутствии симптомов.",
+            "cM1 — Есть отдалённые метастазы, подтверждённые клинически или с помощью методов визуализации (например, КТ, ПЭТ, МРТ, сканирование костей)",
+            "pM — патологическая классификация (после операции)",
+            "pM1 — Любые гистологически доказанные отдалённые метастазы или метастазы более 0,2 мм в нерегионарных лимфоузлах.",
         ]
         combo = QComboBox(self)
         combo.addItems(options)
