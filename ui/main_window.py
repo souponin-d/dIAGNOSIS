@@ -124,6 +124,7 @@ class MainWindow(QMainWindow):
         self._patient_details_widget: QWidget | None = None
         self._patient_details_form: QFormLayout | None = None
         self._stage_value_label: QLabel | None = None
+        self._molecular_subtype_value_label: QLabel | None = None
         self._growth_table: QTableWidget | None = None
         self._growth_chart_view: QChartView | None = None
         self._growth_series: QLineSeries | None = None
@@ -563,6 +564,23 @@ class MainWindow(QMainWindow):
 
         left_column_layout.addWidget(stage_container)
 
+        subtype_container = QWidget(left_column)
+        subtype_layout = QHBoxLayout()
+        subtype_layout.setContentsMargins(0, 0, 0, 0)
+        subtype_layout.setSpacing(12)
+        subtype_container.setLayout(subtype_layout)
+
+        subtype_label = QLabel("Молекулярно-биологический подтип:", subtype_container)
+        subtype_label.setStyleSheet("font-size: 16px;")
+        subtype_layout.addWidget(subtype_label)
+
+        self._molecular_subtype_value_label = QLabel("—", subtype_container)
+        self._molecular_subtype_value_label.setStyleSheet("font-size: 18px; font-weight: 600;")
+        subtype_layout.addWidget(self._molecular_subtype_value_label)
+        subtype_layout.addStretch(1)
+
+        left_column_layout.addWidget(subtype_container)
+
         table_title = QLabel("Динамика наблюдения", left_column)
         table_title.setStyleSheet("font-size: 16px; font-weight: 600;")
         left_column_layout.addWidget(table_title)
@@ -830,6 +848,8 @@ class MainWindow(QMainWindow):
 
         if self._stage_value_label:
             self._stage_value_label.setText("—")
+        if self._molecular_subtype_value_label:
+            self._molecular_subtype_value_label.setText("—")
 
         if not self._patient_data:
             self._patient_details_widget.hide()
@@ -852,6 +872,10 @@ class MainWindow(QMainWindow):
         stage_value = self._calculate_stage()
         if self._stage_value_label:
             self._stage_value_label.setText(stage_value)
+
+        subtype_value = self._calculate_molecular_subtype()
+        if self._molecular_subtype_value_label:
+            self._molecular_subtype_value_label.setText(subtype_value)
 
         self._patient_placeholder_label.hide()
         self._patient_details_widget.show()
@@ -898,6 +922,78 @@ class MainWindow(QMainWindow):
                 return stage
 
         return "—"
+
+    def _calculate_molecular_subtype(self) -> str:
+        if not self._patient_data:
+            return "—"
+
+        er_status = self._interpret_marker_status(self._patient_data.get("Рецептор эстрогена", ""))
+        pr_status = self._interpret_marker_status(self._patient_data.get("Рецептор прогестерона", ""))
+        her2_status = self._interpret_marker_status(self._patient_data.get("HER2", ""))
+        ki67_value = self._parse_percentage(self._patient_data.get("Уровень Ki-67 (%)", ""))
+
+        pr_low = self._is_low_progesterone(self._patient_data.get("Рецептор прогестерона", ""), pr_status)
+        ki67_low = ki67_value is not None and ki67_value <= 20
+        ki67_high = ki67_value is not None and ki67_value >= 30
+
+        if er_status is True and her2_status is False:
+            if ki67_low and pr_status is True:
+                return "Люминальный А"
+            if ki67_high or pr_low:
+                return "Люминальный B (HER2-отрицательный)"
+
+        if er_status is True and her2_status is True:
+            return "Люминальный B (HER2-положительный)"
+
+        if her2_status is True and er_status is False and pr_status is False:
+            return "HER2-положительный (не люминальный)"
+
+        if her2_status is False and er_status is False and pr_status is False:
+            return "Базальноподобный"
+
+        return "—"
+
+    @staticmethod
+    def _interpret_marker_status(value: str | None) -> bool | None:
+        if not value:
+            return None
+
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+
+        positive_tokens = {"+", "полож", "positive", "да"}
+        negative_tokens = {"-", "отриц", "negative", "нет"}
+
+        for token in positive_tokens:
+            if normalized.startswith(token):
+                return True
+        for token in negative_tokens:
+            if normalized.startswith(token):
+                return False
+        return None
+
+    @staticmethod
+    def _parse_percentage(value: str | None) -> float | None:
+        if not value:
+            return None
+
+        match = re.search(r"(\d+[\.,]?\d*)", value.replace("%", ""))
+        if not match:
+            return None
+
+        number = match.group(1).replace(",", ".")
+        try:
+            return float(number)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _is_low_progesterone(value: str | None, status: bool | None) -> bool:
+        percentage = MainWindow._parse_percentage(value or "")
+        if percentage is not None:
+            return percentage < 20
+        return status is False
 
     @staticmethod
     def _normalize_category(value: str, category_type: str) -> str:
