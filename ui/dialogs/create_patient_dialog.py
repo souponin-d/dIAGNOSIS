@@ -27,16 +27,18 @@ class CreatePatientDialog(QDialog):
     """Modal dialog providing input fields for patient data."""
 
     _FIELD_LABELS = [
-        "Статус рецепторов:",
-        "Статус HER2",
+        "Статус:",
+        "Рецептор эстрогена",
+        "Рецептор прогестерона",
+        "HER2",
         "Мутации в генах BRCA1/2",
+        "E-кадгерин",
         "Уровень Ki-67 (%)",
         "Размер опухоли до лечения (см)",
         "Гистологическая градация опухоли (1-3)",
         "T",
         "M",
         "N",
-        "E-кадгерин",
     ]
 
     def __init__(self, parent=None) -> None:
@@ -67,12 +69,19 @@ class CreatePatientDialog(QDialog):
         identity_layout.addWidget(birth_date_container, 1, 0)
 
         sex_input = QComboBox(self)
-        sex_input.addItems(["М", "Ж"])
+        sex_input.addItems(["Ж", "М"])
+        sex_input.setCurrentText("Ж")
         self._add_field(identity_layout, "Пол пациента", sex_input, 1, 1)
         self._sex_input = sex_input
 
         menopause_input = MenopauseStatusField(self)
-        self._add_field(identity_layout, "Менопаузальный статус", menopause_input, 1, 2)
+        self._menopause_container = self._add_field(
+            identity_layout,
+            "Менопаузальный статус",
+            menopause_input,
+            1,
+            2,
+        )
         self._menopause_field = menopause_input
         self._sex_input.currentTextChanged.connect(self._on_sex_changed)
         self._on_sex_changed(self._sex_input.currentText())
@@ -84,16 +93,40 @@ class CreatePatientDialog(QDialog):
         grid_layout = QGridLayout()
         grid_layout.setHorizontalSpacing(20)
         grid_layout.setVerticalSpacing(12)
+        grid_layout.setColumnStretch(1, 1)
+        grid_layout.setColumnStretch(3, 1)
+
+        vertical_fields = {
+            "Уровень Ki-67 (%)",
+            "Размер опухоли до лечения (см)",
+            "Гистологическая градация опухоли (1-3)",
+        }
 
         for index, label_text in enumerate(self._FIELD_LABELS):
             row = index % 6
             column = (index // 6) * 2
 
-            label = QLabel(label_text, self)
+            if label_text == "Статус:":
+                section_label = QLabel(label_text, self)
+                section_label.setStyleSheet("font-weight: 600;")
+                grid_layout.addWidget(section_label, row, column, 1, 2)
+                continue
+
             input_field = self._create_field_widget(label_text)
 
-            grid_layout.addWidget(label, row, column)
-            grid_layout.addWidget(input_field, row, column + 1)
+            if label_text in vertical_fields:
+                container = QWidget(self)
+                container_layout = QVBoxLayout()
+                container_layout.setContentsMargins(0, 0, 0, 0)
+                container_layout.setSpacing(6)
+                container_layout.addWidget(QLabel(label_text, self))
+                container_layout.addWidget(input_field)
+                container.setLayout(container_layout)
+                grid_layout.addWidget(container, row, column, 1, 2)
+            else:
+                label = QLabel(label_text, self)
+                grid_layout.addWidget(label, row, column)
+                grid_layout.addWidget(input_field, row, column + 1)
 
             self._register_input(label_text, input_field)
 
@@ -146,7 +179,7 @@ class CreatePatientDialog(QDialog):
         widget: QWidget,
         row: int,
         column: int,
-    ) -> None:
+    ) -> QWidget:
         container = QWidget(self)
         container_layout = QVBoxLayout()
         container_layout.setContentsMargins(0, 0, 0, 0)
@@ -159,6 +192,7 @@ class CreatePatientDialog(QDialog):
         container.setLayout(container_layout)
         layout.addWidget(container, row, column)
         self._register_input(label_text, widget)
+        return container
 
     def _create_birth_date_field(self) -> QWidget:
         container = QWidget(self)
@@ -233,9 +267,13 @@ class CreatePatientDialog(QDialog):
         return "лет"
 
     def _create_field_widget(self, label_text: str) -> QWidget:
-        if label_text == "Статус рецепторов:":
-            return ReceptorStatusField(self)
-        if label_text in {"Статус HER2", "Мутации в генах BRCA1/2"}:
+        if label_text in {
+            "Рецептор эстрогена",
+            "Рецептор прогестерона",
+            "HER2",
+            "Мутации в генах BRCA1/2",
+            "E-кадгерин",
+        }:
             return PositiveNegativeField(self)
         if label_text == "T":
             return self._create_t_field()
@@ -243,7 +281,16 @@ class CreatePatientDialog(QDialog):
             return NClassificationField(self)
 
         input_field = QLineEdit(self)
-        input_field.setMaximumWidth(220)
+        if label_text == "M":
+            input_field.setMaximumWidth(300)
+        elif label_text in {
+            "Уровень Ki-67 (%)",
+            "Размер опухоли до лечения (см)",
+            "Гистологическая градация опухоли (1-3)",
+        }:
+            input_field.setMaximumWidth(320)
+        else:
+            input_field.setMaximumWidth(220)
         return input_field
 
     def _create_t_field(self) -> QWidget:
@@ -269,10 +316,13 @@ class CreatePatientDialog(QDialog):
         combo.addItems(options)
         combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         combo.view().setTextElideMode(Qt.ElideNone)
+        combo.setMinimumWidth(360)
         return combo
 
     def _on_sex_changed(self, sex: str) -> None:
         self._menopause_field.set_sex(sex)
+        if hasattr(self, "_menopause_container"):
+            self._menopause_container.setVisible(sex == "Ж")
 
     def _read_value(self, widget: QWidget) -> str:
         if isinstance(widget, QLineEdit):
@@ -284,8 +334,6 @@ class CreatePatientDialog(QDialog):
         if isinstance(widget, NClassificationField):
             return widget.value()
         if isinstance(widget, PositiveNegativeField):
-            return widget.value()
-        if isinstance(widget, ReceptorStatusField):
             return widget.value()
         return ""
 
@@ -318,42 +366,6 @@ class PositiveNegativeField(QWidget):
         if self._negative.isChecked():
             return "-"
         return ""
-
-
-class ReceptorStatusField(QWidget):
-    """Combined widget holding estrogen and progesterone receptor status."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-
-        self._estrogen_selector = PositiveNegativeField(self)
-        self._progesterone_selector = PositiveNegativeField(self)
-
-        layout.addLayout(self._build_row("Эстроген", self._estrogen_selector))
-        layout.addLayout(self._build_row("Прогестерон", self._progesterone_selector))
-
-        self.setLayout(layout)
-
-    def _build_row(self, label_text: str, selector: PositiveNegativeField) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-
-        label = QLabel(label_text, self)
-        row.addWidget(label)
-        row.addWidget(selector)
-        row.addStretch(1)
-        return row
-
-    def value(self) -> Dict[str, str]:
-        return {
-            "Статус рецепторов эстрогена": self._estrogen_selector.value(),
-            "Статус рецепторов прогестерона": self._progестерон_selector.value(),
-        }
 
 
 class MenopauseStatusField(QWidget):
@@ -495,3 +507,4 @@ class NClassificationField(QWidget):
     def _configure_combo(combo: QComboBox) -> None:
         combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         combo.view().setTextElideMode(Qt.ElideNone)
+        combo.setMinimumWidth(360)
