@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections import deque
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -14,9 +13,10 @@ from PySide6.QtCore import (
     QMargins,
     QPropertyAnimation,
     QPoint,
+    QPointF,
     QSize,
     Qt,
-    QTimer,
+    QVariantAnimation,
 )
 from PySide6.QtGui import QAction, QIcon, QKeyEvent, QMouseEvent, QPainter, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QStackedLayout,
     QTableWidget,
@@ -88,6 +89,43 @@ class HoverIconButton(QPushButton):
         self._hover_animation.start()
 
 
+class HoverIconToolButton(QToolButton):
+    """Tool button that mimics the hover glow of the startup buttons."""
+
+    def __init__(
+        self,
+        *args,
+        hover_strength: float = 0.35,
+        animation_duration: int = 150,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._hover_strength = hover_strength
+        self._hover_animation = QPropertyAnimation(self)
+        self._hover_effect = QGraphicsColorizeEffect(self)
+        self._hover_effect.setColor(Qt.white)
+        self._hover_effect.setStrength(0.0)
+        self.setGraphicsEffect(self._hover_effect)
+
+        self._hover_animation.setTargetObject(self._hover_effect)
+        self._hover_animation.setPropertyName(b"strength")
+        self._hover_animation.setDuration(animation_duration)
+        self._hover_animation.setEasingCurve(QEasingCurve.InOutQuad)
+
+    def enterEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        self._animate_hover(self._hover_strength)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:  # type: ignore[override]
+        self._animate_hover(0.0)
+        super().leaveEvent(event)
+
+    def _animate_hover(self, value: float) -> None:
+        self._hover_animation.stop()
+        self._hover_animation.setEndValue(value)
+        self._hover_animation.start()
+
+
 class MainWindow(QMainWindow):
     """Primary window displaying the start screen with background and menu."""
 
@@ -99,7 +137,7 @@ class MainWindow(QMainWindow):
     _CREATE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "create_back.png"
     _MORE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "more_back.png"
     _GROWTH_TABLE_HEADERS = ("Нач.", "3м", "6м", "12м", "24м")
-    _GROWTH_ANIMATION_INTERVAL_MS = 180
+    _GROWTH_ANIMATION_DURATION_MS = 1600
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
@@ -119,7 +157,7 @@ class MainWindow(QMainWindow):
         self._content_widget: QWidget | None = None
         self._menu_animation: QPropertyAnimation | None = None
         self._menu_expanded = False
-        self._menu_toggle_button: QToolButton | None = None
+        self._menu_toggle_button: HoverIconToolButton | None = None
         self._tab_widget: QTabWidget | None = None
         self._section_pages: dict[str, QWidget] = {}
         self._section_buttons: dict[str, QPushButton] = {}
@@ -142,8 +180,8 @@ class MainWindow(QMainWindow):
         self._growth_series: QLineSeries | None = None
         self._growth_axis_x: QCategoryAxis | None = None
         self._growth_axis_y: QValueAxis | None = None
-        self._growth_animation_timer: QTimer | None = None
-        self._pending_growth_points = deque()
+        self._growth_animation: QVariantAnimation | None = None
+        self._growth_animation_points: list[tuple[float, float]] = []
 
         self._init_ui()
         self._center_on_screen()
@@ -268,10 +306,11 @@ class MainWindow(QMainWindow):
             QToolButton {
                 border: none;
                 background-color: transparent;
+                padding: 0;
             }
             QToolButton:hover {
                 background-color: rgba(0, 0, 0, 25);
-                border-radius: 6px;
+                border-radius: 12px;
             }
             QToolButton:checked {
                 background-color: rgba(0, 0, 0, 40);
@@ -284,7 +323,7 @@ class MainWindow(QMainWindow):
             self._menu_toggle_button.setText("☰")
             return
 
-        icon_size = QSize(24, 24)
+        icon_size = QSize(48, 48)
         scaled_pixmap = pixmap.scaled(icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self._menu_toggle_button.setIcon(QIcon(scaled_pixmap))
         self._menu_toggle_button.setIconSize(icon_size)
@@ -448,6 +487,11 @@ class MainWindow(QMainWindow):
         if not self._startup_view:
             return
 
+        if self._close_button:
+            self._close_button.hide()
+            self._close_button.deleteLater()
+            self._close_button = None
+
         if self._background_label:
             self._background_label.hide()
             self._background_label.deleteLater()
@@ -519,7 +563,7 @@ class MainWindow(QMainWindow):
 
         self._content_widget = QWidget(project_widget)
         self._content_widget.setAttribute(Qt.WA_StyledBackground, True)
-        self._content_widget.setStyleSheet("background-color: #d9d9d9;")
+        self._content_widget.setStyleSheet("background-color: #f2f2f2;")
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(16, 16, 16, 16)
         content_layout.setSpacing(16)
@@ -534,10 +578,10 @@ class MainWindow(QMainWindow):
         top_layout.setSpacing(12)
         top_bar.setLayout(top_layout)
 
-        self._menu_toggle_button = QToolButton(top_bar)
+        self._menu_toggle_button = HoverIconToolButton(top_bar)
         self._menu_toggle_button.setToolTip("Меню")
         self._menu_toggle_button.setCheckable(True)
-        self._menu_toggle_button.setFixedSize(40, 40)
+        self._menu_toggle_button.setFixedSize(80, 80)
         self._configure_menu_toggle_button()
         self._menu_toggle_button.clicked.connect(self._toggle_menu)
         top_layout.addWidget(self._menu_toggle_button)
@@ -553,7 +597,7 @@ class MainWindow(QMainWindow):
         self._tab_widget = QTabWidget(self._content_widget)
         self._tab_widget.setDocumentMode(True)
         self._tab_widget.setStyleSheet(
-            "QTabWidget::pane { background: #d9d9d9; border: none; }"
+            "QTabWidget::pane { background: transparent; border: none; }"
         )
         if tab_bar := self._tab_widget.tabBar():
             tab_bar.hide()
@@ -561,39 +605,71 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self._tab_widget, 1)
 
         info_tab, info_layout = self._create_tab()
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(0)
+
+        info_background = QFrame(info_tab)
+        info_background.setObjectName("infoBackground")
+        info_background.setStyleSheet(
+            "#infoBackground { background-color: #ffffff; border-radius: 24px; }"
+        )
+        info_background_layout = QVBoxLayout()
+        info_background_layout.setContentsMargins(32, 32, 32, 32)
+        info_background_layout.setSpacing(24)
+        info_background.setLayout(info_background_layout)
+        info_layout.addWidget(info_background)
 
         info_columns = QHBoxLayout()
         info_columns.setContentsMargins(0, 0, 0, 0)
-        info_columns.setSpacing(24)
-        info_layout.addLayout(info_columns, 1)
+        info_columns.setSpacing(32)
+        info_background_layout.addLayout(info_columns, 1)
 
-        left_column = QWidget(info_tab)
-        left_column_layout = QVBoxLayout()
-        left_column_layout.setContentsMargins(0, 0, 0, 0)
-        left_column_layout.setSpacing(16)
-        left_column.setLayout(left_column_layout)
+        patient_scroll = QScrollArea(info_tab)
+        patient_scroll.setObjectName("patientInfoScroll")
+        patient_scroll.setWidgetResizable(True)
+        patient_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        patient_scroll.setStyleSheet(
+            """
+            #patientInfoScroll {
+                border: none;
+                background: transparent;
+            }
+            #patientInfoScroll QWidget {
+                background: transparent;
+            }
+            """
+        )
 
-        patient_title = QLabel("Данные пациента", left_column)
+        patient_panel = QWidget(patient_scroll)
+        patient_panel_layout = QVBoxLayout()
+        patient_panel_layout.setContentsMargins(0, 0, 0, 0)
+        patient_panel_layout.setSpacing(16)
+        patient_panel.setLayout(patient_panel_layout)
+        patient_scroll.setWidget(patient_panel)
+
+        patient_title = QLabel("Информация о пациенте", patient_panel)
         patient_title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        left_column_layout.addWidget(patient_title)
+        patient_panel_layout.addWidget(patient_title)
 
         self._patient_placeholder_label = QLabel(
             "Информация появится после заполнения формы.",
-            left_column,
+            patient_panel,
         )
         self._patient_placeholder_label.setWordWrap(True)
-        left_column_layout.addWidget(self._patient_placeholder_label)
+        patient_panel_layout.addWidget(self._patient_placeholder_label)
 
         self._patient_details_form = QFormLayout()
         self._patient_details_form.setContentsMargins(0, 0, 0, 0)
-        self._patient_details_form.setSpacing(6)
+        self._patient_details_form.setSpacing(10)
         self._patient_details_form.setLabelAlignment(Qt.AlignLeft)
-        self._patient_details_widget = QWidget(left_column)
+        self._patient_details_form.setFormAlignment(Qt.AlignTop)
+        self._patient_details_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self._patient_details_widget = QWidget(patient_panel)
         self._patient_details_widget.setLayout(self._patient_details_form)
         self._patient_details_widget.hide()
-        left_column_layout.addWidget(self._patient_details_widget)
+        patient_panel_layout.addWidget(self._patient_details_widget)
 
-        stage_container = QWidget(left_column)
+        stage_container = QWidget(patient_panel)
         stage_layout = QHBoxLayout()
         stage_layout.setContentsMargins(0, 0, 0, 0)
         stage_layout.setSpacing(12)
@@ -608,9 +684,9 @@ class MainWindow(QMainWindow):
         stage_layout.addWidget(self._stage_value_label)
         stage_layout.addStretch(1)
 
-        left_column_layout.addWidget(stage_container)
+        patient_panel_layout.addWidget(stage_container)
 
-        subtype_container = QWidget(left_column)
+        subtype_container = QWidget(patient_panel)
         subtype_layout = QHBoxLayout()
         subtype_layout.setContentsMargins(0, 0, 0, 0)
         subtype_layout.setSpacing(12)
@@ -625,18 +701,18 @@ class MainWindow(QMainWindow):
         subtype_layout.addWidget(self._molecular_subtype_value_label)
         subtype_layout.addStretch(1)
 
-        left_column_layout.addWidget(subtype_container)
+        patient_panel_layout.addWidget(subtype_container)
 
-        table_title = QLabel("Динамика наблюдения", left_column)
+        table_title = QLabel("Динамика наблюдения", patient_panel)
         table_title.setStyleSheet("font-size: 16px; font-weight: 600;")
-        left_column_layout.addWidget(table_title)
+        patient_panel_layout.addWidget(table_title)
 
-        self._growth_table = self._create_growth_table(left_column)
-        left_column_layout.addWidget(self._growth_table)
-        left_column_layout.addStretch(1)
+        self._growth_table = self._create_growth_table(patient_panel)
+        patient_panel_layout.addWidget(self._growth_table)
+        patient_panel_layout.addStretch(1)
 
-        left_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        info_columns.addWidget(left_column)
+        patient_scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        info_columns.addWidget(patient_scroll)
 
         right_column = QWidget(info_tab)
         right_column_layout = QVBoxLayout()
@@ -651,7 +727,7 @@ class MainWindow(QMainWindow):
 
         info_columns.addWidget(right_column)
         info_columns.setStretch(0, 1)
-        info_columns.setStretch(1, 1)
+        info_columns.setStretch(1, 2)
 
         self._refresh_patient_information_view()
 
@@ -858,38 +934,61 @@ class MainWindow(QMainWindow):
         if not self._growth_series:
             return
 
-        if self._growth_animation_timer:
-            self._growth_animation_timer.stop()
-        else:
-            self._growth_animation_timer = QTimer(self)
-            self._growth_animation_timer.timeout.connect(self._append_next_growth_point)
-            self._growth_animation_timer.setInterval(self._GROWTH_ANIMATION_INTERVAL_MS)
+        if self._growth_animation:
+            self._growth_animation.stop()
 
+        self._growth_animation_points = list(points)
+
+        if not self._growth_animation_points:
+            self._growth_series.clear()
+            return
+
+        if len(self._growth_animation_points) <= 1:
+            final_points = [QPointF(x, y) for x, y in self._growth_animation_points]
+            self._growth_series.replace(final_points)
+            return
+
+        if not self._growth_animation:
+            self._growth_animation = QVariantAnimation(self)
+            self._growth_animation.valueChanged.connect(self._handle_growth_animation_value)
+            self._growth_animation.finished.connect(self._finalize_growth_animation)
+            self._growth_animation.setEasingCurve(QEasingCurve.InOutCubic)
+
+        self._growth_animation.setDuration(self._GROWTH_ANIMATION_DURATION_MS)
+        self._growth_animation.setStartValue(0.0)
+        self._growth_animation.setEndValue(float(len(self._growth_animation_points) - 1))
         self._growth_series.clear()
-        self._pending_growth_points.clear()
-        self._pending_growth_points.extend(points)
+        self._growth_animation.start()
 
-        if not self._pending_growth_points:
+    def _handle_growth_animation_value(self, value: float) -> None:
+        if not self._growth_series or not self._growth_animation_points:
             return
 
-        self._growth_animation_timer.start()
+        animation_value = float(value)
+        segment_index = int(animation_value)
+        displayed_points: list[QPointF] = []
 
-    def _append_next_growth_point(self) -> None:
-        if not self._growth_series:
-            if self._growth_animation_timer:
-                self._growth_animation_timer.stop()
+        for idx in range(min(segment_index + 1, len(self._growth_animation_points))):
+            x, y = self._growth_animation_points[idx]
+            displayed_points.append(QPointF(x, y))
+
+        next_index = segment_index + 1
+        if next_index < len(self._growth_animation_points):
+            start_x, start_y = self._growth_animation_points[segment_index]
+            end_x, end_y = self._growth_animation_points[next_index]
+            local_progress = animation_value - float(segment_index)
+            interpolated_x = start_x + (end_x - start_x) * local_progress
+            interpolated_y = start_y + (end_y - start_y) * local_progress
+            displayed_points.append(QPointF(interpolated_x, interpolated_y))
+
+        self._growth_series.replace(displayed_points)
+
+    def _finalize_growth_animation(self) -> None:
+        if not self._growth_series or not self._growth_animation_points:
             return
 
-        if not self._pending_growth_points:
-            if self._growth_animation_timer:
-                self._growth_animation_timer.stop()
-            return
-
-        x, y = self._pending_growth_points.popleft()
-        self._growth_series.append(x, y)
-
-        if not self._pending_growth_points and self._growth_animation_timer:
-            self._growth_animation_timer.stop()
+        final_points = [QPointF(x, y) for x, y in self._growth_animation_points]
+        self._growth_series.replace(final_points)
 
     def _recalculate_growth_data(self) -> None:
         if not self._growth_table:
@@ -948,6 +1047,11 @@ class MainWindow(QMainWindow):
         for label, value in self._patient_data.items():
             name_label = QLabel(label, self._patient_details_widget)
             name_label.setWordWrap(True)
+            name_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            name_label.setSizePolicy(
+                QSizePolicy.Policy.Preferred,
+                QSizePolicy.Policy.Minimum,
+            )
             value_label = QLabel(value or "—", self._patient_details_widget)
             value_label.setStyleSheet("font-weight: 600;")
             value_label.setWordWrap(True)
@@ -955,6 +1059,7 @@ class MainWindow(QMainWindow):
                 QSizePolicy.Policy.Expanding,
                 QSizePolicy.Policy.Preferred,
             )
+            value_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
             self._patient_details_form.addRow(name_label, value_label)
 
         stage_value = self._calculate_stage()
