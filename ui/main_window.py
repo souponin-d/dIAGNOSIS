@@ -20,8 +20,7 @@ from PySide6.QtWidgets import (
     QToolButton,
     QTabWidget,
     QVBoxLayout,
-    QWidget,
-    QWIDGETSIZE_MAX,
+    QWidget
 )
 
 try:
@@ -122,7 +121,7 @@ class MainWindow(QMainWindow):
             }
             """
         )
-        button_container.setFixedSize(520, 180)
+        button_container.setFixedSize(780, 700)
 
         close_button = QPushButton(button_container)
         close_button.setCursor(Qt.PointingHandCursor)
@@ -130,7 +129,7 @@ class MainWindow(QMainWindow):
         close_button.setToolTip("Закрыть")
         self._set_startup_button_icon(close_button, self._CLOSE_ICON_PATH)
         close_button.clicked.connect(self.close)
-        close_button.move(40, 60)
+        close_button.move(638, 0)
 
         create_button = QPushButton(button_container)
         create_button.setCursor(Qt.PointingHandCursor)
@@ -138,14 +137,14 @@ class MainWindow(QMainWindow):
         create_button.setToolTip("Создать проект")
         self._set_startup_button_icon(create_button, self._CREATE_ICON_PATH)
         create_button.clicked.connect(self._open_create_dialog)
-        create_button.move(200, 60)
+        create_button.move(103, 207)
 
         more_button = QPushButton(button_container)
         more_button.setCursor(Qt.PointingHandCursor)
         more_button.setFlat(True)
         more_button.setToolTip("Дополнительно")
         self._set_startup_button_icon(more_button, self._MORE_ICON_PATH)
-        more_button.move(360, 60)
+        more_button.move(178, 207)
 
         overlay_layout.addStretch()
         overlay_layout.addWidget(button_container, alignment=Qt.AlignHCenter)
