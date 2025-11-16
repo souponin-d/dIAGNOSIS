@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import re
+from collections import deque
 from pathlib import Path
 from typing import Optional, Sequence
 
 from PySide6.QtCharts import QCategoryAxis, QChart, QChartView, QLineSeries, QValueAxis
-from PySide6.QtCore import QEvent, QEasingCurve, QMargins, QPropertyAnimation, QPoint, QSize, Qt
+from PySide6.QtCore import (
+    QEvent,
+    QEasingCurve,
+    QMargins,
+    QPropertyAnimation,
+    QPoint,
+    QSize,
+    Qt,
+    QTimer,
+)
 from PySide6.QtGui import QAction, QIcon, QKeyEvent, QMouseEvent, QPainter, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -84,10 +94,12 @@ class MainWindow(QMainWindow):
     _BACKGROUND_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "background.png"
     _ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "logo.png"
     _MENU_EXPANDED_WIDTH = 240
+    _MENU_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "menu.png"
     _CLOSE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "close_back.png"
     _CREATE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "create_back.png"
     _MORE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "more_back.png"
     _GROWTH_TABLE_HEADERS = ("Нач.", "3м", "6м", "12м", "24м")
+    _GROWTH_ANIMATION_INTERVAL_MS = 180
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
@@ -130,6 +142,8 @@ class MainWindow(QMainWindow):
         self._growth_series: QLineSeries | None = None
         self._growth_axis_x: QCategoryAxis | None = None
         self._growth_axis_y: QValueAxis | None = None
+        self._growth_animation_timer: QTimer | None = None
+        self._pending_growth_points = deque()
 
         self._init_ui()
         self._center_on_screen()
@@ -243,6 +257,38 @@ class MainWindow(QMainWindow):
         button.setIcon(icon)
         button.setIconSize(scaled_pixmap.size())
         button.setFixedSize(scaled_pixmap.size())
+
+    def _configure_menu_toggle_button(self) -> None:
+        if not self._menu_toggle_button:
+            return
+
+        self._menu_toggle_button.setCursor(Qt.PointingHandCursor)
+        self._menu_toggle_button.setStyleSheet(
+            """
+            QToolButton {
+                border: none;
+                background-color: transparent;
+            }
+            QToolButton:hover {
+                background-color: rgba(0, 0, 0, 25);
+                border-radius: 6px;
+            }
+            QToolButton:checked {
+                background-color: rgba(0, 0, 0, 40);
+            }
+            """
+        )
+
+        pixmap = QPixmap(str(self._MENU_ICON_PATH))
+        if pixmap.isNull():
+            self._menu_toggle_button.setText("☰")
+            return
+
+        icon_size = QSize(24, 24)
+        scaled_pixmap = pixmap.scaled(icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._menu_toggle_button.setIcon(QIcon(scaled_pixmap))
+        self._menu_toggle_button.setIconSize(icon_size)
+        self._menu_toggle_button.setText("")
 
     def _position_close_button(self) -> None:
         if not self._close_button:
@@ -489,10 +535,10 @@ class MainWindow(QMainWindow):
         top_bar.setLayout(top_layout)
 
         self._menu_toggle_button = QToolButton(top_bar)
-        self._menu_toggle_button.setText("☰")
         self._menu_toggle_button.setToolTip("Меню")
         self._menu_toggle_button.setCheckable(True)
         self._menu_toggle_button.setFixedSize(40, 40)
+        self._configure_menu_toggle_button()
         self._menu_toggle_button.clicked.connect(self._toggle_menu)
         top_layout.addWidget(self._menu_toggle_button)
 
@@ -779,8 +825,8 @@ class MainWindow(QMainWindow):
         if not self._growth_table or not self._growth_series:
             return
 
-        self._growth_series.clear()
         values: list[float] = []
+        points: list[tuple[float, float]] = []
         for column in range(self._growth_table.columnCount()):
             item = self._growth_table.item(0, column)
             if not item:
@@ -790,8 +836,12 @@ class MainWindow(QMainWindow):
             except ValueError:
                 continue
             values.append(value)
-            self._growth_series.append(float(column), value)
+            points.append((float(column), value))
 
+        self._update_growth_axis_range(values)
+        self._start_growth_animation(points)
+
+    def _update_growth_axis_range(self, values: Sequence[float]) -> None:
         if not self._growth_axis_y:
             return
 
@@ -800,8 +850,46 @@ class MainWindow(QMainWindow):
             maximum = max(values)
             margin = max((maximum - minimum) * 0.1, 1.0)
             self._growth_axis_y.setRange(minimum - margin, maximum + margin)
+            return
+
+        self._growth_axis_y.setRange(0.0, 1.0)
+
+    def _start_growth_animation(self, points: Sequence[tuple[float, float]]) -> None:
+        if not self._growth_series:
+            return
+
+        if self._growth_animation_timer:
+            self._growth_animation_timer.stop()
         else:
-            self._growth_axis_y.setRange(0.0, 1.0)
+            self._growth_animation_timer = QTimer(self)
+            self._growth_animation_timer.timeout.connect(self._append_next_growth_point)
+            self._growth_animation_timer.setInterval(self._GROWTH_ANIMATION_INTERVAL_MS)
+
+        self._growth_series.clear()
+        self._pending_growth_points.clear()
+        self._pending_growth_points.extend(points)
+
+        if not self._pending_growth_points:
+            return
+
+        self._growth_animation_timer.start()
+
+    def _append_next_growth_point(self) -> None:
+        if not self._growth_series:
+            if self._growth_animation_timer:
+                self._growth_animation_timer.stop()
+            return
+
+        if not self._pending_growth_points:
+            if self._growth_animation_timer:
+                self._growth_animation_timer.stop()
+            return
+
+        x, y = self._pending_growth_points.popleft()
+        self._growth_series.append(x, y)
+
+        if not self._pending_growth_points and self._growth_animation_timer:
+            self._growth_animation_timer.stop()
 
     def _recalculate_growth_data(self) -> None:
         if not self._growth_table:
