@@ -314,6 +314,7 @@ class MainWindow(QMainWindow):
             }
             QToolButton:checked {
                 background-color: rgba(0, 0, 0, 40);
+                border-radius: 12px;
             }
             """
         )
@@ -321,6 +322,7 @@ class MainWindow(QMainWindow):
         pixmap = QPixmap(str(self._MENU_ICON_PATH))
         if pixmap.isNull():
             self._menu_toggle_button.setText("☰")
+            self._menu_toggle_button.setFixedSize(self._menu_toggle_button.sizeHint())
             return
 
         icon_size = QSize(48, 48)
@@ -328,6 +330,7 @@ class MainWindow(QMainWindow):
         self._menu_toggle_button.setIcon(QIcon(scaled_pixmap))
         self._menu_toggle_button.setIconSize(icon_size)
         self._menu_toggle_button.setText("")
+        self._menu_toggle_button.setFixedSize(icon_size)
 
     def _position_close_button(self) -> None:
         if not self._close_button:
@@ -581,7 +584,6 @@ class MainWindow(QMainWindow):
         self._menu_toggle_button = HoverIconToolButton(top_bar)
         self._menu_toggle_button.setToolTip("Меню")
         self._menu_toggle_button.setCheckable(True)
-        self._menu_toggle_button.setFixedSize(80, 80)
         self._configure_menu_toggle_button()
         self._menu_toggle_button.clicked.connect(self._toggle_menu)
         top_layout.addWidget(self._menu_toggle_button)
@@ -637,12 +639,36 @@ class MainWindow(QMainWindow):
             #patientInfoScroll QWidget {
                 background: transparent;
             }
+            #patientInfoScroll QScrollBar:vertical {
+                width: 10px;
+                background: transparent;
+                margin: 12px 2px 12px 0;
+            }
+            #patientInfoScroll QScrollBar::handle:vertical {
+                background: rgba(22, 52, 85, 140);
+                border-radius: 5px;
+                min-height: 30px;
+            }
+            #patientInfoScroll QScrollBar::handle:vertical:hover {
+                background: rgba(22, 52, 85, 180);
+            }
+            #patientInfoScroll QScrollBar::add-line:vertical,
+            #patientInfoScroll QScrollBar::sub-line:vertical,
+            #patientInfoScroll QScrollBar::add-page:vertical,
+            #patientInfoScroll QScrollBar::sub-page:vertical {
+                background: none;
+                border: none;
+            }
             """
         )
 
         patient_panel = QWidget(patient_scroll)
+        patient_panel.setObjectName("patientInfoPanel")
+        patient_panel.setStyleSheet(
+            "#patientInfoPanel { background-color: #E0E9F2; border-radius: 24px; }"
+        )
         patient_panel_layout = QVBoxLayout()
-        patient_panel_layout.setContentsMargins(0, 0, 0, 0)
+        patient_panel_layout.setContentsMargins(24, 24, 24, 24)
         patient_panel_layout.setSpacing(16)
         patient_panel.setLayout(patient_panel_layout)
         patient_scroll.setWidget(patient_panel)
@@ -668,47 +694,6 @@ class MainWindow(QMainWindow):
         self._patient_details_widget.setLayout(self._patient_details_form)
         self._patient_details_widget.hide()
         patient_panel_layout.addWidget(self._patient_details_widget)
-
-        stage_container = QWidget(patient_panel)
-        stage_layout = QHBoxLayout()
-        stage_layout.setContentsMargins(0, 0, 0, 0)
-        stage_layout.setSpacing(12)
-        stage_container.setLayout(stage_layout)
-
-        stage_label = QLabel("Стадия:", stage_container)
-        stage_label.setStyleSheet("font-size: 16px;")
-        stage_layout.addWidget(stage_label)
-
-        self._stage_value_label = QLabel("—", stage_container)
-        self._stage_value_label.setStyleSheet("font-size: 24px; font-weight: 600;")
-        stage_layout.addWidget(self._stage_value_label)
-        stage_layout.addStretch(1)
-
-        patient_panel_layout.addWidget(stage_container)
-
-        subtype_container = QWidget(patient_panel)
-        subtype_layout = QHBoxLayout()
-        subtype_layout.setContentsMargins(0, 0, 0, 0)
-        subtype_layout.setSpacing(12)
-        subtype_container.setLayout(subtype_layout)
-
-        subtype_label = QLabel("Молекулярно-биологический подтип:", subtype_container)
-        subtype_label.setStyleSheet("font-size: 16px;")
-        subtype_layout.addWidget(subtype_label)
-
-        self._molecular_subtype_value_label = QLabel("—", subtype_container)
-        self._molecular_subtype_value_label.setStyleSheet("font-size: 18px; font-weight: 600;")
-        subtype_layout.addWidget(self._molecular_subtype_value_label)
-        subtype_layout.addStretch(1)
-
-        patient_panel_layout.addWidget(subtype_container)
-
-        table_title = QLabel("Динамика наблюдения", patient_panel)
-        table_title.setStyleSheet("font-size: 16px; font-weight: 600;")
-        patient_panel_layout.addWidget(table_title)
-
-        self._growth_table = self._create_growth_table(patient_panel)
-        patient_panel_layout.addWidget(self._growth_table)
         patient_panel_layout.addStretch(1)
 
         patient_scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
@@ -728,6 +713,62 @@ class MainWindow(QMainWindow):
         info_columns.addWidget(right_column)
         info_columns.setStretch(0, 1)
         info_columns.setStretch(1, 2)
+
+        patient_highlights = QFrame(info_tab)
+        patient_highlights.setObjectName("patientHighlights")
+        patient_highlights.setStyleSheet(
+            "#patientHighlights { background-color: #ffffff; border-radius: 24px; }"
+        )
+        patient_highlights_layout = QVBoxLayout()
+        patient_highlights_layout.setContentsMargins(24, 24, 24, 24)
+        patient_highlights_layout.setSpacing(16)
+        patient_highlights.setLayout(patient_highlights_layout)
+
+        stage_container = QWidget(patient_highlights)
+        stage_layout = QHBoxLayout()
+        stage_layout.setContentsMargins(0, 0, 0, 0)
+        stage_layout.setSpacing(12)
+        stage_container.setLayout(stage_layout)
+
+        stage_label = QLabel("Стадия:", stage_container)
+        stage_label.setStyleSheet("font-size: 16px;")
+        stage_layout.addWidget(stage_label)
+
+        self._stage_value_label = QLabel("—", stage_container)
+        self._stage_value_label.setStyleSheet("font-size: 24px; font-weight: 600;")
+        stage_layout.addWidget(self._stage_value_label)
+        stage_layout.addStretch(1)
+
+        patient_highlights_layout.addWidget(stage_container)
+
+        subtype_container = QWidget(patient_highlights)
+        subtype_layout = QHBoxLayout()
+        subtype_layout.setContentsMargins(0, 0, 0, 0)
+        subtype_layout.setSpacing(12)
+        subtype_container.setLayout(subtype_layout)
+
+        subtype_label = QLabel("Молекулярно-биологический подтип:", subtype_container)
+        subtype_label.setStyleSheet("font-size: 16px;")
+        subtype_layout.addWidget(subtype_label)
+
+        self._molecular_subtype_value_label = QLabel("—", subtype_container)
+        self._molecular_subtype_value_label.setStyleSheet(
+            "font-size: 18px; font-weight: 600;"
+        )
+        subtype_layout.addWidget(self._molecular_subtype_value_label)
+        subtype_layout.addStretch(1)
+
+        patient_highlights_layout.addWidget(subtype_container)
+
+        table_title = QLabel("Динамика наблюдения", patient_highlights)
+        table_title.setStyleSheet("font-size: 16px; font-weight: 600;")
+        patient_highlights_layout.addWidget(table_title)
+
+        self._growth_table = self._create_growth_table(patient_highlights)
+        patient_highlights_layout.addWidget(self._growth_table)
+        patient_highlights_layout.addStretch(1)
+
+        info_background_layout.addWidget(patient_highlights)
 
         self._refresh_patient_information_view()
 
