@@ -2,22 +2,29 @@
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCharts import QChart, QChartView, QScatterSeries
-from PySide6.QtCore import QEvent, QEasingCurve, QMargins, QPropertyAnimation, QPoint, QPointF, QSize, Qt
+from PySide6.QtCharts import QCategoryAxis, QChart, QChartView, QLineSeries, QValueAxis
+from PySide6.QtCore import QEvent, QEasingCurve, QMargins, QPropertyAnimation, QPoint, QSize, Qt
 from PySide6.QtGui import QAction, QIcon, QKeyEvent, QMouseEvent, QPainter, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QDialog,
+    QFormLayout,
+    QFrame,
     QGraphicsColorizeEffect,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMainWindow,
     QPushButton,
     QSizePolicy,
     QStackedLayout,
+    QTableWidget,
+    QTableWidgetItem,
     QToolButton,
     QTabWidget,
     QVBoxLayout,
@@ -79,6 +86,7 @@ class MainWindow(QMainWindow):
     _CLOSE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "close_back.png"
     _CREATE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "create_back.png"
     _MORE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "more_back.png"
+    _GROWTH_TABLE_HEADERS = ("Нач.", "3м", "6м", "12м", "24м")
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
@@ -110,6 +118,15 @@ class MainWindow(QMainWindow):
         self._close_button: HoverIconButton | None = None
         self._overlay_widget: QWidget | None = None
         self._overlay_margins: QMargins | None = None
+        self._patient_data: dict[str, str] = {}
+        self._patient_placeholder_label: QLabel | None = None
+        self._patient_details_widget: QWidget | None = None
+        self._patient_details_form: QFormLayout | None = None
+        self._growth_table: QTableWidget | None = None
+        self._growth_chart_view: QChartView | None = None
+        self._growth_series: QLineSeries | None = None
+        self._growth_axis_x: QCategoryAxis | None = None
+        self._growth_axis_y: QValueAxis | None = None
 
         self._init_ui()
         self._center_on_screen()
@@ -306,7 +323,9 @@ class MainWindow(QMainWindow):
     def _open_create_dialog(self) -> None:
         dialog = CreatePatientDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._patient_data = dialog.collected_data()
             self._transition_to_full_screen()
+            self._refresh_patient_information_view()
 
     def _apply_startup_background_size(self) -> None:
         if not self._startup_view:
@@ -494,8 +513,60 @@ class MainWindow(QMainWindow):
 
         info_tab, info_layout = self._create_tab()
 
-        chart_view = self._create_information_chart()
-        info_layout.addWidget(chart_view, 1)
+        info_columns = QHBoxLayout()
+        info_columns.setContentsMargins(0, 0, 0, 0)
+        info_columns.setSpacing(24)
+        info_layout.addLayout(info_columns, 1)
+
+        left_column = QWidget(info_tab)
+        left_column_layout = QVBoxLayout()
+        left_column_layout.setContentsMargins(0, 0, 0, 0)
+        left_column_layout.setSpacing(16)
+        left_column.setLayout(left_column_layout)
+
+        patient_title = QLabel("Данные пациента", left_column)
+        patient_title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        left_column_layout.addWidget(patient_title)
+
+        self._patient_placeholder_label = QLabel(
+            "Информация появится после заполнения формы.",
+            left_column,
+        )
+        self._patient_placeholder_label.setWordWrap(True)
+        left_column_layout.addWidget(self._patient_placeholder_label)
+
+        self._patient_details_form = QFormLayout()
+        self._patient_details_form.setContentsMargins(0, 0, 0, 0)
+        self._patient_details_form.setSpacing(6)
+        self._patient_details_form.setLabelAlignment(Qt.AlignLeft)
+        self._patient_details_widget = QWidget(left_column)
+        self._patient_details_widget.setLayout(self._patient_details_form)
+        self._patient_details_widget.hide()
+        left_column_layout.addWidget(self._patient_details_widget)
+
+        table_title = QLabel("Динамика наблюдения", left_column)
+        table_title.setStyleSheet("font-size: 16px; font-weight: 600;")
+        left_column_layout.addWidget(table_title)
+
+        self._growth_table = self._create_growth_table(left_column)
+        left_column_layout.addWidget(self._growth_table)
+        left_column_layout.addStretch(1)
+
+        info_columns.addWidget(left_column, 1)
+
+        right_column = QWidget(info_tab)
+        right_column_layout = QVBoxLayout()
+        right_column_layout.setContentsMargins(0, 0, 0, 0)
+        right_column_layout.setSpacing(12)
+        right_column.setLayout(right_column_layout)
+
+        self._growth_chart_view = self._create_growth_chart(right_column)
+        right_column_layout.addWidget(self._growth_chart_view, 1)
+
+        info_columns.addWidget(right_column, 1)
+
+        self._update_growth_chart_from_table()
+        self._refresh_patient_information_view()
 
         self._tab_widget.addTab(info_tab, "Информация")
         self._section_pages["Информация"] = info_tab
@@ -610,41 +681,110 @@ class MainWindow(QMainWindow):
             self._tab_widget.setCurrentIndex(index)
             self._update_active_section(section)
 
-    def _create_information_chart(self) -> QChartView:
-        series = QScatterSeries()
-        series.setMarkerSize(12.0)
-        series.setColor(self.palette().highlight().color())
+    def _create_growth_table(self, parent: QWidget) -> QTableWidget:
+        table = QTableWidget(1, len(self._GROWTH_TABLE_HEADERS), parent)
+        table.setHorizontalHeaderLabels(self._GROWTH_TABLE_HEADERS)
+        table.verticalHeader().hide()
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.NoSelection)
+        table.setFocusPolicy(Qt.NoFocus)
+        table.setFrameShape(QFrame.NoFrame)
 
-        points = (
-            QPointF(0.0, 2.0),
-            QPointF(1.0, 3.5),
-            QPointF(2.0, 2.8),
-            QPointF(3.0, 4.2),
-            QPointF(4.0, 3.9),
-            QPointF(5.0, 5.1),
-            QPointF(6.0, 4.6),
-            QPointF(7.0, 5.4),
-        )
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Stretch)
 
-        for point in points:
-            series.append(point)
+        for column in range(table.columnCount()):
+            value = random.randint(1, 10)
+            item = QTableWidgetItem(str(value))
+            item.setTextAlignment(Qt.AlignCenter)
+            table.setItem(0, column, item)
 
+        return table
+
+    def _create_growth_chart(self, parent: QWidget) -> QChartView:
+        self._growth_series = QLineSeries()
         chart = QChart()
-        chart.addSeries(series)
-        chart.createDefaultAxes()
-        chart.setTitle("Измеренные показатели")
+        chart.addSeries(self._growth_series)
         chart.legend().hide()
+        chart.setTitle("Темпы роста опухоли")
         chart.setBackgroundVisible(True)
         chart.setBackgroundBrush(Qt.white)
         chart.setPlotAreaBackgroundBrush(Qt.white)
         chart.setPlotAreaBackgroundVisible(True)
 
-        chart_view = QChartView(chart)
+        self._growth_axis_x = QCategoryAxis()
+        self._growth_axis_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
+        for index, header in enumerate(self._GROWTH_TABLE_HEADERS):
+            self._growth_axis_x.append(header, float(index))
+        if self._GROWTH_TABLE_HEADERS:
+            self._growth_axis_x.setRange(0.0, float(len(self._GROWTH_TABLE_HEADERS) - 1))
+        chart.addAxis(self._growth_axis_x, Qt.AlignBottom)
+        self._growth_series.attachAxis(self._growth_axis_x)
+
+        self._growth_axis_y = QValueAxis()
+        self._growth_axis_y.setLabelFormat("%.1f")
+        chart.addAxis(self._growth_axis_y, Qt.AlignLeft)
+        self._growth_series.attachAxis(self._growth_axis_y)
+
+        chart_view = QChartView(chart, parent)
         chart_view.setRenderHint(QPainter.Antialiasing)
         chart_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         chart_view.setStyleSheet("background-color: white; border: none;")
 
         return chart_view
+
+    def _update_growth_chart_from_table(self) -> None:
+        if not self._growth_table or not self._growth_series:
+            return
+
+        self._growth_series.clear()
+        values: list[float] = []
+        for column in range(self._growth_table.columnCount()):
+            item = self._growth_table.item(0, column)
+            if not item:
+                continue
+            try:
+                value = float(item.text().replace(",", "."))
+            except ValueError:
+                continue
+            values.append(value)
+            self._growth_series.append(float(column), value)
+
+        if not self._growth_axis_y:
+            return
+
+        if values:
+            minimum = min(values)
+            maximum = max(values)
+            margin = max((maximum - minimum) * 0.1, 1.0)
+            self._growth_axis_y.setRange(minimum - margin, maximum + margin)
+        else:
+            self._growth_axis_y.setRange(0.0, 1.0)
+
+    def _refresh_patient_information_view(self) -> None:
+        if (
+            not self._patient_details_form
+            or not self._patient_details_widget
+            or not self._patient_placeholder_label
+        ):
+            return
+
+        while self._patient_details_form.rowCount():
+            self._patient_details_form.removeRow(0)
+
+        if not self._patient_data:
+            self._patient_details_widget.hide()
+            self._patient_placeholder_label.show()
+            return
+
+        for label, value in self._patient_data.items():
+            name_label = QLabel(label, self._patient_details_widget)
+            value_label = QLabel(value or "—", self._patient_details_widget)
+            value_label.setStyleSheet("font-weight: 600;")
+            self._patient_details_form.addRow(name_label, value_label)
+
+        self._patient_placeholder_label.hide()
+        self._patient_details_widget.show()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
         if self._startup_view and event.button() == Qt.LeftButton:
