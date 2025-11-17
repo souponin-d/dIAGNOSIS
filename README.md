@@ -1,45 +1,52 @@
 # dIAGNOSIS
 
-Desktop application prototype for clinical data analysis. Version V1 provides a PySide6-based user interface with stubbed analytical logic and extensible architecture prepared for future FastAPI integration.
+Прототип настольного приложения для анализа клинических данных. Интерфейс построен на PySide6, логика изолирована в сервисах и ядре,
+а в перспективе предусмотрено подключение FastAPI-бэкенда и моделей машинного обучения.
 
-## Requirements
+## Возможности
+- Форма ввода данных пациента с базовой валидацией.
+- Кнопка **«Проанализировать»** запускает заглушку вычислений в отдельном потоке и обновляет результат в UI.
+- Разделение слоёв: `ui/` отвечает за окна, `core/` — за бизнес-логику, `services/` — за интеграции и фоновые задачи.
+- Подготовленная структура ресурсов (`resources/`, `utils/`) упрощает добавление иконок, переводов и вспомогательных функций.
 
-- Python 3.11+
-- [PySide6](https://doc.qt.io/qtforpython/) (see `requirements.txt`)
+## Архитектура
+- **PySide6** — основной UI-фреймворк. Все виджеты и контроллеры лежат в `ui/`.
+- **Core** инкапсулирует доменные сущности и правила обработки данных.
+- **Services** реализуют фоновые задачи и (в будущем) сетевые вызовы.
+- **Backend** зарезервирован под FastAPI: сюда будет добавлен REST API для расчётов и хранения результатов.
 
-## Project structure
-
-```
-project_root/
-├── app.py
-├── config.py
-├── main.py
-├── core/
-├── services/
-├── ui/
-├── backend/
-├── resources/
-└── utils/
-```
-
-Refer to the in-code docstrings for current capabilities and upcoming extension points.
-
-## Running the application
-
+## Быстрый старт
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # On Windows use `.venv\Scripts\activate`
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
 ```
+Приложение откроет главное окно. Для отладки запустите `main.py` из IDE (PyCharm, VS Code) — дополнительных шагов не требуется.
 
-> **Важно.** На текущем этапе проект не требует отдельной компиляции или сборки. Запускайте `main.py` напрямую (например, через конфигурацию Run/Debug в PyCharm), чтобы работать с приложением в режиме отладки.
+## Структура репозитория
+```
+project_root/
+├── app.py            # Инициализация приложения
+├── main.py           # Точка входа для UI
+├── config.py         # Общая конфигурация
+├── backend/          # Заглушки будущего API
+├── core/             # Доменные модели и логика
+├── services/         # Фоновые сервисы и интеграции
+├── ui/               # Qt-виджеты и контроллеры
+├── resources/        # Иконки, стили и статические файлы
+└── utils/            # Общие утилиты
+```
 
-The application opens the main window with a patient form and results view. Press the **Проанализировать** button to trigger the stub analysis executed in a background thread.
+## Полезные команды
+| Цель | Команда |
+| --- | --- |
+| Установка зависимостей | `pip install -r requirements.txt` |
+| Проверка зависимостей | `pip list --format=columns` |
+| Запуск приложения | `python main.py` |
 
-## Future development
-
-- Implement FastAPI backend and HTTP analysis service.
-- Expand patient data entry forms and validation.
-- Integrate real mathematical/ML models.
-- Provide persistent settings storage and local database support.
+## Дальнейшие шаги
+1. Реализовать FastAPI-сервис для асинхронного анализа данных.
+2. Расширить формы пациента: добавить больше полей, подсказки и проверку ввода.
+3. Подключить реальные модели/алгоритмы и хранение результатов в локальной БД.
+4. Настроить упаковку (PyInstaller или Briefcase) для распространения среди врачей.
