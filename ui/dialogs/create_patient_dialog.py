@@ -7,7 +7,7 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Dict, List, Mapping
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QRegularExpression
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
 
 
 class CreatePatientDialog(QDialog):
@@ -523,6 +524,15 @@ class CreatePatientDialog(QDialog):
             input_field.setMaximumWidth(320)
         else:
             input_field.setMaximumWidth(220)
+
+        if label_text == "Уровень Ki-67 (%)":
+            pattern = QRegularExpression(r"^$|^(?:100(?:[\.,]0{0,2})?|\d{1,2}(?:[\.,]\d{0,2})?)$")
+            input_field.setValidator(QRegularExpressionValidator(pattern, input_field))
+        elif label_text == "Размер опухоли до лечения (см)":
+            pattern = QRegularExpression(r"^$|^(?:\d{1,2}(?:[\.,]\d{0,2})?)$")
+            input_field.setValidator(QRegularExpressionValidator(pattern, input_field))
+        elif label_text == "Гистологическая градация опухоли (1-3)":
+            input_field.setValidator(QIntValidator(1, 3, input_field))
         return input_field
 
     def _create_t_field(self) -> QWidget:

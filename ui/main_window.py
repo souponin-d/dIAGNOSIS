@@ -48,8 +48,9 @@ except ImportError:  # pragma: no cover - fallback for PySide6 versions without 
     QWIDGETSIZE_MAX = (1 << 24) - 1
 
 from config import AppConfig
-from core.patient_features import calculate_stage
+from core.patient_features import calculate_age, calculate_stage, normalize_category
 from services.regression import regression_V_no_treatment
+from services.therapy import generate_treatment_recommendations
 from ui.dialogs.create_patient_dialog import CreatePatientDialog
 
 
@@ -1136,6 +1137,7 @@ class MainWindow(QMainWindow):
             if self._edit_patient_button:
                 self._edit_patient_button.setEnabled(False)
             self._recalculate_growth_data()
+            self._log_therapy_recommendations()
             return
 
         for label, value in self._patient_data.items():
@@ -1169,6 +1171,7 @@ class MainWindow(QMainWindow):
         if self._edit_patient_button:
             self._edit_patient_button.setEnabled(True)
         self._recalculate_growth_data()
+        self._log_therapy_recommendations()
 
     def _calculate_molecular_subtype(self) -> str:
         if not self._patient_data:
@@ -1241,6 +1244,116 @@ class MainWindow(QMainWindow):
         if percentage is not None:
             return percentage < 20
         return status is False
+
+    def _log_therapy_recommendations(self) -> None:
+        if not self._patient_data:
+            return
+        payload = self._build_therapy_payload()
+        if not payload:
+            print("[therapy] Недостаточно данных для расчёта рекомендаций.")
+            return
+
+        print(f"[therapy] Исходные данные для генерации рекомендаций: {payload}")
+        try:
+            result = generate_treatment_recommendations(**payload)
+        except Exception as error:
+            print(f"[therapy] Ошибка при расчёте рекомендаций: {error}")
+            return
+
+        if not result:
+            print("[therapy] Функция рекомендаций вернула пустой ответ.")
+            return
+
+        section_names = {
+            "diagnostic_check": "Диагностический блок",
+            "surgery": "Хирургия",
+            "hormone_therapy": "Гормонотерапия",
+            "chemotherapy": "Химиотерапия",
+            "anti_her2_therapy": "Анти-HER2",
+            "other_therapy": "Дополнительно",
+            "notes": "Примечания",
+        }
+        print("[therapy] --- Рекомендации по лечению ---")
+        for section, entries in result.items():
+            if not entries:
+                continue
+            print(f"[therapy] {section_names.get(section, section)}:")
+            for entry in entries:
+                print(f"  - {entry}")
+
+    def _build_therapy_payload(self) -> dict[str, object] | None:
+        if not self._patient_data:
+            return None
+
+        er_status = self._interpret_marker_status(self._patient_data.get("Рецептор эстрогена", ""))
+        pr_status = self._interpret_marker_status(self._patient_data.get("Рецептор прогестерона", ""))
+        her2_status = self._interpret_marker_status(self._patient_data.get("HER2", ""))
+        if er_status is None or pr_status is None or her2_status is None:
+            return None
+
+        t_category = normalize_category(self._patient_data.get("T", ""), "T")
+        n_category = normalize_category(self._patient_data.get("N", ""), "N")
+        m_category = normalize_category(self._patient_data.get("M", ""), "M")
+        if not (t_category and n_category and m_category):
+            return None
+
+        menopausal_status = (self._patient_data.get("Менопаузальный статус") or "").strip().lower()
+        if menopausal_status == "0" or not menopausal_status:
+            menopausal_status = "premenopausal"
+        allowed_statuses = {"premenopausal", "perimenopausal", "postmenopausal"}
+        if menopausal_status not in allowed_statuses:
+            menopausal_status = "premenopausal"
+
+        ki67_value = self._parse_percentage(self._patient_data.get("Уровень Ki-67 (%)", ""))
+        brca_status = self._interpret_marker_status(self._patient_data.get("Мутации в генах BRCA1/2", ""))
+        e_cadherin = self._interpret_marker_status(self._patient_data.get("E-кадгерин", ""))
+        if e_cadherin is True:
+            e_cadherin_status: str | None = "positive"
+        elif e_cadherin is False:
+            e_cadherin_status = "negative"
+        else:
+            e_cadherin_status = None
+
+        payload: dict[str, object] = {
+            "age": calculate_age(self._patient_data.get("Дата рождения")) or 0,
+            "gender": self._normalize_gender_value(self._patient_data.get("Пол пациента")),
+            "menopausal_status": menopausal_status,
+            "ER": er_status,
+            "PR": pr_status,
+            "HER2": her2_status,
+            "BRCA_status": brca_status,
+            "Ki67": ki67_value,
+            "T": t_category,
+            "grade": self._parse_grade_value(
+                self._patient_data.get("Гистологическая градация опухоли (1-3)", "")
+            ),
+            "N": n_category,
+            "M": m_category,
+            "e_cadherin_status": e_cadherin_status,
+            "surgery": False,
+        }
+        return payload
+
+    @staticmethod
+    def _normalize_gender_value(value: str | None) -> str:
+        normalized = (value or "").strip().lower()
+        if normalized.startswith("м"):
+            return "male"
+        if normalized.startswith("ж"):
+            return "female"
+        return "female"
+
+    @staticmethod
+    def _parse_grade_value(value: str | None) -> int:
+        if not value:
+            return 2
+        cleaned = value.replace(",", ".").strip()
+        try:
+            numeric = float(cleaned)
+        except ValueError:
+            return 2
+        integer_grade = int(round(numeric))
+        return max(1, min(integer_grade, 3))
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
         if self._startup_view and event.button() == Qt.LeftButton:
