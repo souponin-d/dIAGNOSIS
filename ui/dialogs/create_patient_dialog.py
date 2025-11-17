@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, date
-from typing import Dict, List
+from typing import Dict, List, Mapping
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QRadioButton,
     QStackedLayout,
@@ -41,9 +42,34 @@ class CreatePatientDialog(QDialog):
         "N",
     ]
 
-    def __init__(self, parent=None) -> None:
+    _REGRESSION_REQUIRED_FIELDS = (
+        "Дата рождения",
+        "Менопаузальный статус",
+        "Рецептор эстрогена",
+        "Рецептор прогестерона",
+        "HER2",
+        "Мутации в генах BRCA1/2",
+        "Уровень Ki-67 (%)",
+        "Размер опухоли до лечения (см)",
+        "T",
+        "M",
+        "N",
+    )
+
+    def __init__(
+        self,
+        parent=None,
+        patient_data: Mapping[str, str] | None = None,
+        *,
+        is_edit: bool = False,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Создание пациента")
+        self._is_edit_mode = is_edit
+        self._initial_data = dict(patient_data or {})
+
+        self.setWindowTitle(
+            "Редактирование пациента" if self._is_edit_mode else "Создание пациента"
+        )
         self.setModal(True)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._apply_styles()
@@ -52,9 +78,12 @@ class CreatePatientDialog(QDialog):
         self._field_order: List[str] = []
 
         self._build_layout()
+        if self._initial_data:
+            self._populate_initial_data(self._initial_data)
 
     def _build_layout(self) -> None:
-        header_label = QLabel("Добавление нового пациента", self)
+        header_text = "Редактирование пациента" if self._is_edit_mode else "Добавление нового пациента"
+        header_label = QLabel(header_text, self)
         header_label.setObjectName("dialogHeader")
 
         identity_layout = QGridLayout()
@@ -141,8 +170,9 @@ class CreatePatientDialog(QDialog):
         import_button = QPushButton("Импорт из ЕМИАС", self)
         import_button.setEnabled(False)
         import_button.setObjectName("secondaryButton")
-        create_button = QPushButton("Создать", self)
-        create_button.clicked.connect(self.accept)
+        submit_label = "Сохранить" if self._is_edit_mode else "Создать"
+        create_button = QPushButton(submit_label, self)
+        create_button.clicked.connect(self._on_submit_clicked)
 
         for button in (import_button, create_button):
             button.setCursor(Qt.PointingHandCursor)
@@ -172,6 +202,11 @@ class CreatePatientDialog(QDialog):
 
         self.setFixedWidth(720)
         self.setSizeGripEnabled(False)
+
+    def _on_submit_clicked(self) -> None:
+        if not self._validate_required_fields():
+            return
+        self.accept()
 
     def _apply_styles(self) -> None:
         """Apply a lightweight stylesheet for the dialog."""
@@ -255,6 +290,52 @@ class CreatePatientDialog(QDialog):
             else:
                 data[label] = value
         return data
+
+    def _populate_initial_data(self, data: Mapping[str, str]) -> None:
+        for label, widget in self._inputs.items():
+            if label not in data:
+                continue
+            value = data[label]
+            if isinstance(widget, QLineEdit):
+                widget.setText(value)
+            elif isinstance(widget, QComboBox):
+                index = widget.findText(value)
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+            elif isinstance(widget, MenopauseStatusField):
+                widget.set_value(value)
+            elif isinstance(widget, NClassificationField):
+                widget.set_value(value)
+            elif isinstance(widget, PositiveNegativeField):
+                widget.set_value(value)
+
+    def _validate_required_fields(self) -> bool:
+        missing: list[str] = []
+        for label in self._REGRESSION_REQUIRED_FIELDS:
+            widget = self._inputs.get(label)
+            if not widget:
+                continue
+            value = self._read_value(widget)
+            if label == "Дата рождения" and (not value or "_" in value):
+                missing.append(label)
+                continue
+            if not value:
+                missing.append(label)
+
+        if not missing:
+            return True
+
+        message = "\n".join(missing)
+        QMessageBox.warning(
+            self,
+            "Недостаточно данных",
+            "Для расчёта прогноза заполните поля:\n" + message,
+        )
+        first_missing = missing[0]
+        widget = self._inputs.get(first_missing)
+        if isinstance(widget, QLineEdit):
+            widget.setFocus()
+        return False
 
     def _register_input(self, label: str, widget: QWidget) -> None:
         self._inputs[label] = widget
@@ -471,6 +552,18 @@ class PositiveNegativeField(QWidget):
             return "-"
         return ""
 
+    def set_value(self, value: str) -> None:
+        cleaned = (value or "").strip()
+        if cleaned == "+":
+            self._positive.setChecked(True)
+        elif cleaned == "-":
+            self._negative.setChecked(True)
+        else:
+            self._button_group.setExclusive(False)
+            self._positive.setChecked(False)
+            self._negative.setChecked(False)
+            self._button_group.setExclusive(True)
+
 
 class MenopauseStatusField(QWidget):
     """Widget that adapts available input based on patient sex."""
@@ -514,6 +607,17 @@ class MenopauseStatusField(QWidget):
         if self._stack.currentIndex() == 0:
             return "0"
         return self._options_combo.currentText()
+
+    def set_value(self, value: str) -> None:
+        cleaned = (value or "").strip()
+        if cleaned == "0":
+            self._stack.setCurrentIndex(0)
+            self._readonly_display.setText("0")
+            return
+        self._stack.setCurrentIndex(1)
+        index = self._options_combo.findText(cleaned)
+        if index >= 0:
+            self._options_combo.setCurrentIndex(index)
 
 
 class NClassificationField(QWidget):
@@ -612,3 +716,18 @@ class NClassificationField(QWidget):
         combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         combo.view().setTextElideMode(Qt.ElideNone)
         combo.setMinimumWidth(360)
+
+    def set_value(self, value: str) -> None:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            return
+        for index, combo in enumerate((self._c_combo, self._p_combo)):
+            match_index = combo.findText(cleaned)
+            if match_index >= 0:
+                if index == 0:
+                    self._c_radio.setChecked(True)
+                else:
+                    self._p_radio.setChecked(True)
+                combo.setCurrentIndex(match_index)
+                self._stack.setCurrentIndex(index)
+                return
