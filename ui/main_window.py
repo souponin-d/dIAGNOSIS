@@ -1637,23 +1637,21 @@ class MainWindow(QMainWindow):
             self._update_forecast_views(())
             return
 
-        dataset_values = self._get_dataset_growth_values()
-        if dataset_values:
-            self._set_growth_table_values(dataset_values)
-            self._update_growth_chart(dataset_values)
-            forecast_values = self._prepare_forecast_measurements(dataset_values)
-            if forecast_values:
-                self._update_forecast_views(forecast_values)
-            else:
-                self._update_forecast_views(())
-            return
-
         mean_values, ci_low, ci_high = regression_V_no_treatment_with_ci(
             self._patient_data
         )
         self._set_growth_table_values(mean_values)
         self._update_growth_chart(mean_values, ci_low, ci_high)
-        self._update_forecast_views(mean_values)
+
+        dataset_values = self._get_dataset_growth_values()
+        forecast_values: Sequence[float] | None = None
+        if dataset_values:
+            forecast_values = self._prepare_forecast_measurements(dataset_values)
+
+        if not forecast_values:
+            forecast_values = self._prepare_forecast_measurements(mean_values)
+
+        self._update_forecast_views(forecast_values or ())
 
     def _get_dataset_growth_values(self) -> list[float | None]:
         if not self._patient_data:
