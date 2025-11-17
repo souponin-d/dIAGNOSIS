@@ -9,7 +9,7 @@ def regression_V_no_treatment(patient_data: Mapping[str, str] | None = None) -> 
     """Estimate tumor volume progression without treatment.
 
     The implementation is intentionally simple and serves as a placeholder so
-    that the UI can already consume structured data. Once the actual
+    that the UI can al  ready consume structured data. Once the actual
     statistical model is available, it can replace the internals of this
     function without affecting the rest of the application.
     """

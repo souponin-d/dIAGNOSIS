@@ -341,8 +341,8 @@ class MainWindow(QMainWindow):
             return
 
         margins = self._overlay_margins or QMargins(0, 0, 0, 0)
-        y_offset = max(margins.top() - 40, 0)
-        x_offset = max(parent.width() - self._close_button.width() - margins.right(), 0)
+        y_offset = max(margins.top() - 28, 0)
+        x_offset = max(parent.width() - self._close_button.width() - margins.right() + 27, 0)
         self._close_button.move(x_offset, y_offset)
 
     def _center_on_screen(self) -> None:
