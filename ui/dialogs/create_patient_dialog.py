@@ -78,6 +78,8 @@ class CreatePatientDialog(QDialog):
         super().__init__(parent)
         self._is_edit_mode = is_edit
         self._initial_data = dict(patient_data or {})
+        self._dataset_record: dict[str, str] = {}
+        self._restore_dataset_record_from_initial_data()
 
         self.setWindowTitle(
             "Редактирование пациента" if self._is_edit_mode else "Создание пациента"
@@ -271,6 +273,7 @@ class CreatePatientDialog(QDialog):
             return
 
         self._apply_dataset_record(record)
+        self._dataset_record = dict(record)
         self._clear_validation_errors()
 
     def _apply_styles(self) -> None:
@@ -362,6 +365,8 @@ class CreatePatientDialog(QDialog):
                 data.update(value)
             else:
                 data[label] = value
+        if self._dataset_record:
+            self._append_dataset_metadata(data)
         return data
 
     def _populate_initial_data(self, data: Mapping[str, str]) -> None:
@@ -679,6 +684,40 @@ class CreatePatientDialog(QDialog):
         self._apply_t_category(tumor_size)
         self._apply_m_category(record.get("has_metastasis"))
         self._apply_n_category(record)
+
+    def _append_dataset_metadata(self, data: Dict[str, str]) -> None:
+        """Persist selected dataset identifiers and measurements."""
+
+        dataset_keys = (
+            "patient_id",
+            "tumor_size_before",
+            "tumor_size_3m",
+            "tumor_size_6m",
+            "tumor_size_12m",
+            "tumor_size_24m",
+        )
+        for key in dataset_keys:
+            if key in self._dataset_record:
+                data[key] = self._dataset_record[key]
+
+    def _restore_dataset_record_from_initial_data(self) -> None:
+        """Restore stored dataset metadata when editing an entry."""
+
+        dataset_keys = (
+            "patient_id",
+            "tumor_size_before",
+            "tumor_size_3m",
+            "tumor_size_6m",
+            "tumor_size_12m",
+            "tumor_size_24m",
+        )
+        restored: dict[str, str] = {}
+        for key in dataset_keys:
+            value = self._initial_data.get(key)
+            if value:
+                restored[key] = str(value)
+        if restored:
+            self._dataset_record = restored
 
     def _set_line_edit_value(self, label: str, value: str) -> None:
         widget = self._inputs.get(label)
