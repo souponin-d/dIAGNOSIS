@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 from datetime import datetime, date
+from pathlib import Path
 from typing import Dict, List, Mapping
 
 from PySide6.QtCore import Qt
@@ -55,6 +57,14 @@ class CreatePatientDialog(QDialog):
         "M",
         "N",
     )
+
+    _DATASET_PATH = (
+        Path(__file__).resolve().parents[2]
+        / "resources"
+        / "datasets"
+        / "breast_cancer_data.xlsx - Стадия 1.csv"
+    )
+    _DATASET_PATIENT_ID = "BC_1_0001"
 
     def __init__(
         self,
@@ -170,14 +180,20 @@ class CreatePatientDialog(QDialog):
         import_button = QPushButton("Импорт из ЕМИАС", self)
         import_button.setEnabled(False)
         import_button.setObjectName("secondaryButton")
+
+        dataset_button = QPushButton("Импорт из датасета", self)
+        dataset_button.setObjectName("secondaryButton")
+        dataset_button.clicked.connect(self._on_import_dataset_clicked)
+
         submit_label = "Сохранить" if self._is_edit_mode else "Создать"
         create_button = QPushButton(submit_label, self)
         create_button.clicked.connect(self._on_submit_clicked)
 
-        for button in (import_button, create_button):
+        for button in (import_button, dataset_button, create_button):
             button.setCursor(Qt.PointingHandCursor)
 
         buttons_layout.addWidget(import_button)
+        buttons_layout.addWidget(dataset_button)
         buttons_layout.addStretch(1)
         buttons_layout.addWidget(create_button)
 
@@ -208,6 +224,35 @@ class CreatePatientDialog(QDialog):
             return
         self.accept()
 
+    def _on_import_dataset_clicked(self) -> None:
+        try:
+            record = self._load_dataset_record(self._DATASET_PATIENT_ID)
+        except FileNotFoundError:
+            QMessageBox.critical(
+                self,
+                "Датасет не найден",
+                "Файл датасета отсутствует по ожидаемому пути."
+            )
+            return
+        except Exception as error:  # pragma: no cover - user feedback branch
+            QMessageBox.critical(
+                self,
+                "Ошибка чтения датасета",
+                f"Не удалось обработать файл датасета: {error}",
+            )
+            return
+
+        if not record:
+            QMessageBox.warning(
+                self,
+                "Пациент не найден",
+                "Пациент с указанным идентификатором отсутствует в датасете.",
+            )
+            return
+
+        self._apply_dataset_record(record)
+        self._clear_validation_errors()
+
     def _apply_styles(self) -> None:
         """Apply a lightweight stylesheet for the dialog."""
 
@@ -236,6 +281,11 @@ class CreatePatientDialog(QDialog):
                 border-radius: 10px;
                 padding: 8px 12px;
                 background-color: #ffffff;
+            }
+            QLineEdit[hasError="true"],
+            QComboBox[hasError="true"] {
+                border-color: #e53e3e;
+                background-color: #fff5f5;
             }
             QLineEdit:focus,
             QComboBox:focus {
@@ -270,6 +320,9 @@ class CreatePatientDialog(QDialog):
                 background-color: transparent;
                 color: #163455;
                 border: 1px solid #cbd3df;
+            }
+            QRadioButton[hasError="true"]::indicator {
+                border: 2px solid #e53e3e;
             }
             #lineSeparator {
                 background-color: #ecf0f7;
@@ -315,11 +368,15 @@ class CreatePatientDialog(QDialog):
             widget = self._inputs.get(label)
             if not widget:
                 continue
-            value = self._read_value(widget)
-            if label == "Дата рождения" and (not value or "_" in value):
-                missing.append(label)
-                continue
-            if not value:
+            value = (self._read_value(widget) or "").strip()
+            is_missing = False
+            if label == "Дата рождения":
+                is_missing = not value or "_" in value
+            else:
+                is_missing = not value
+
+            self._set_widget_error_state(widget, is_missing)
+            if is_missing:
                 missing.append(label)
 
         if not missing:
@@ -336,6 +393,12 @@ class CreatePatientDialog(QDialog):
         if isinstance(widget, QLineEdit):
             widget.setFocus()
         return False
+
+    def _clear_validation_errors(self) -> None:
+        for label in self._REGRESSION_REQUIRED_FIELDS:
+            widget = self._inputs.get(label)
+            if widget:
+                self._set_widget_error_state(widget, False)
 
     def _register_input(self, label: str, widget: QWidget) -> None:
         self._inputs[label] = widget
@@ -522,6 +585,174 @@ class CreatePatientDialog(QDialog):
             return widget.value()
         return ""
 
+    def _set_widget_error_state(self, widget: QWidget, has_error: bool) -> None:
+        if hasattr(widget, "set_error_state"):
+            try:
+                widget.set_error_state(has_error)  # type: ignore[attr-defined]
+            except TypeError:
+                pass
+            return
+        if isinstance(widget, (QLineEdit, QComboBox)):
+            widget.setProperty("hasError", has_error)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+
+    def _load_dataset_record(self, patient_id: str) -> Mapping[str, str] | None:
+        if not self._DATASET_PATH.exists():
+            raise FileNotFoundError(self._DATASET_PATH)
+
+        with self._DATASET_PATH.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                if (row.get("patient_id") or "").strip() == patient_id:
+                    return row
+        return None
+
+    def _apply_dataset_record(self, record: Mapping[str, str]) -> None:
+        self._set_line_edit_value("Фамилия", record.get("patient_id", ""))
+        self._set_line_edit_value("Имя", "Пациент")
+        self._set_line_edit_value("Отчество", "")
+
+        birth_date = self._derive_birth_date_from_age(record.get("age"))
+        if birth_date:
+            self._birth_date_input.setText(birth_date)
+
+        gender = (record.get("gender") or "").strip()
+        normalized_gender = gender.lower()
+        mapped_gender = ""
+        if normalized_gender in {"ж", "f", "female"}:
+            mapped_gender = "Ж"
+        elif normalized_gender in {"м", "m", "male"}:
+            mapped_gender = "М"
+        if mapped_gender:
+            self._sex_input.setCurrentText(mapped_gender)
+
+        menopause = record.get("menopausal_status", "")
+        if isinstance(self._menopause_field, MenopauseStatusField):
+            self._menopause_field.set_value(menopause)
+
+        self._apply_marker_value("Рецептор эстрогена", record.get("er_status"))
+        self._apply_marker_value("Рецептор прогестерона", record.get("pr_status"))
+        self._apply_marker_value("HER2", record.get("her2_status"))
+        self._apply_marker_value("Мутации в генах BRCA1/2", record.get("brca_mutation"))
+
+        ki67_value = self._normalize_dataset_decimal(record.get("ki67_level"))
+        if ki67_value is not None:
+            self._set_line_edit_value("Уровень Ki-67 (%)", f"{ki67_value}")
+
+        tumor_grade = record.get("tumor_grade", "")
+        self._set_line_edit_value("Гистологическая градация опухоли (1-3)", tumor_grade or "")
+
+        tumor_size = self._normalize_dataset_decimal(record.get("tumor_size_before"))
+        if tumor_size is not None:
+            self._set_line_edit_value("Размер опухоли до лечения (см)", f"{tumor_size}")
+
+        self._apply_t_category(tumor_size)
+        self._apply_m_category(record.get("has_metastasis"))
+        self._apply_n_category(record)
+
+    def _set_line_edit_value(self, label: str, value: str) -> None:
+        widget = self._inputs.get(label)
+        if isinstance(widget, QLineEdit):
+            widget.setText(value)
+
+    def _apply_marker_value(self, label: str, raw_value: str | None) -> None:
+        widget = self._inputs.get(label)
+        if not isinstance(widget, PositiveNegativeField):
+            return
+        widget.set_value(self._boolean_to_marker(raw_value))
+
+    @staticmethod
+    def _boolean_to_marker(value: str | None) -> str:
+        normalized = (value or "").strip().lower()
+        if normalized in {"true", "1", "yes", "да", "+"}:
+            return "+"
+        if normalized in {"false", "0", "no", "нет", "-"}:
+            return "-"
+        return ""
+
+    def _normalize_dataset_decimal(self, value: str | None) -> float | None:
+        if not value:
+            return None
+        cleaned = value.replace("\"", "").replace(",", ".").strip()
+        try:
+            return round(float(cleaned), 2)
+        except ValueError:
+            return None
+
+    def _derive_birth_date_from_age(self, age_value: str | None) -> str | None:
+        if not age_value:
+            return None
+        try:
+            years = int(float(age_value))
+        except ValueError:
+            return None
+        today = date.today()
+        birth_year = max(1900, today.year - years)
+        birth_date = date(birth_year, 1, 1)
+        return birth_date.strftime("%d.%m.%Y")
+
+    def _apply_t_category(self, tumor_size: float | None) -> None:
+        widget = self._inputs.get("T")
+        if not isinstance(widget, QComboBox) or tumor_size is None:
+            return
+
+        selection = self._derive_t_category(tumor_size)
+        if selection:
+            self._select_combo_option(widget, selection)
+
+    def _apply_m_category(self, has_metastasis: str | None) -> None:
+        widget = self._inputs.get("M")
+        if not isinstance(widget, QComboBox):
+            return
+        is_positive = (has_metastasis or "").strip().lower() in {"true", "1", "yes"}
+        self._select_combo_option(widget, "cM1" if is_positive else "cM0")
+
+    def _apply_n_category(self, record: Mapping[str, str]) -> None:
+        widget = self._inputs.get("N")
+        if not isinstance(widget, NClassificationField):
+            return
+        nodes_raw = record.get("positive_lymph_nodes", "0")
+        try:
+            nodes = int(float(nodes_raw))
+        except ValueError:
+            nodes = 0
+
+        lymph_status = (record.get("lymph_node_status") or "").strip().lower()
+        if nodes >= 10:
+            prefix = "cN3"
+        elif nodes >= 4:
+            prefix = "cN2"
+        elif nodes >= 1 or lymph_status in {"positive", "yes"}:
+            prefix = "cN1"
+        else:
+            prefix = "cN0"
+
+        widget.set_value(prefix)
+
+    @staticmethod
+    def _derive_t_category(size_cm: float | None) -> str | None:
+        if size_cm is None:
+            return None
+        size_mm = size_cm * 10.0
+        if size_mm <= 1:
+            return "T1mic"
+        if size_mm <= 5:
+            return "T1a"
+        if size_mm <= 10:
+            return "T1b"
+        if size_mm <= 20:
+            return "T1c"
+        if size_mm <= 50:
+            return "T2"
+        return "T3"
+
+    @staticmethod
+    def _select_combo_option(combo: QComboBox, prefix: str) -> None:
+        index = combo.findText(prefix, Qt.MatchStartsWith)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
 
 class PositiveNegativeField(QWidget):
     """Simple + / - selector represented by radio buttons."""
@@ -544,6 +775,7 @@ class PositiveNegativeField(QWidget):
         layout.addStretch(1)
 
         self.setLayout(layout)
+        self._has_error = False
 
     def value(self) -> str:
         if self._positive.isChecked():
@@ -563,6 +795,15 @@ class PositiveNegativeField(QWidget):
             self._positive.setChecked(False)
             self._negative.setChecked(False)
             self._button_group.setExclusive(True)
+
+    def set_error_state(self, has_error: bool) -> None:
+        if self._has_error == has_error:
+            return
+        self._has_error = has_error
+        for button in (self._positive, self._negative):
+            button.setProperty("hasError", has_error)
+            button.style().unpolish(button)
+            button.style().polish(button)
 
 
 class MenopauseStatusField(QWidget):
@@ -596,6 +837,7 @@ class MenopauseStatusField(QWidget):
 
         self._readonly_display = readonly
         self._options_combo = combo
+        self._has_error = False
 
     def set_sex(self, sex: str) -> None:
         if sex == "Ж":
@@ -618,6 +860,15 @@ class MenopauseStatusField(QWidget):
         index = self._options_combo.findText(cleaned)
         if index >= 0:
             self._options_combo.setCurrentIndex(index)
+
+    def set_error_state(self, has_error: bool) -> None:
+        if self._has_error == has_error:
+            return
+        self._has_error = has_error
+        for widget in (self._readonly_display, self._options_combo):
+            widget.setProperty("hasError", has_error)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
 
 class NClassificationField(QWidget):
@@ -699,6 +950,7 @@ class NClassificationField(QWidget):
         main_layout.addLayout(radio_layout)
         main_layout.addLayout(self._stack)
         self.setLayout(main_layout)
+        self._has_error = False
 
     def _on_type_changed(self, checked: bool) -> None:
         if checked:
@@ -721,8 +973,11 @@ class NClassificationField(QWidget):
         cleaned = (value or "").strip()
         if not cleaned:
             return
-        for index, combo in enumerate((self._c_combo, self._p_combo)):
+        combos = (self._c_combo, self._p_combo)
+        for index, combo in enumerate(combos):
             match_index = combo.findText(cleaned)
+            if match_index < 0:
+                match_index = combo.findText(cleaned, Qt.MatchStartsWith)
             if match_index >= 0:
                 if index == 0:
                     self._c_radio.setChecked(True)
@@ -731,3 +986,17 @@ class NClassificationField(QWidget):
                 combo.setCurrentIndex(match_index)
                 self._stack.setCurrentIndex(index)
                 return
+
+    def set_error_state(self, has_error: bool) -> None:
+        if self._has_error == has_error:
+            return
+        self._has_error = has_error
+        for widget in (
+            self._c_radio,
+            self._p_radio,
+            self._c_combo,
+            self._p_combo,
+        ):
+            widget.setProperty("hasError", has_error)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
