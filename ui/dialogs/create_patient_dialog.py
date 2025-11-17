@@ -45,6 +45,8 @@ class CreatePatientDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Создание пациента")
         self.setModal(True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self._apply_styles()
 
         self._inputs: Dict[str, QWidget] = {}
         self._field_order: List[str] = []
@@ -53,11 +55,12 @@ class CreatePatientDialog(QDialog):
 
     def _build_layout(self) -> None:
         header_label = QLabel("Добавление нового пациента", self)
-        header_label.setStyleSheet("font-size: 20px; font-weight: 600;")
+        header_label.setObjectName("dialogHeader")
 
         identity_layout = QGridLayout()
         identity_layout.setHorizontalSpacing(20)
         identity_layout.setVerticalSpacing(12)
+        identity_layout.setContentsMargins(0, 0, 0, 0)
         for column in range(3):
             identity_layout.setColumnStretch(column, 1)
 
@@ -87,14 +90,15 @@ class CreatePatientDialog(QDialog):
         self._on_sex_changed(self._sex_input.currentText())
 
         separator = QFrame(self)
-        separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
+        separator.setObjectName("lineSeparator")
+        separator.setFrameShape(QFrame.NoFrame)
 
         grid_layout = QGridLayout()
         grid_layout.setHorizontalSpacing(20)
         grid_layout.setVerticalSpacing(12)
         grid_layout.setColumnStretch(1, 1)
         grid_layout.setColumnStretch(3, 1)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
 
         vertical_fields = {
             "Уровень Ki-67 (%)",
@@ -132,29 +136,113 @@ class CreatePatientDialog(QDialog):
 
         buttons_layout = QHBoxLayout()
         buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(12)
 
         import_button = QPushButton("Импорт из ЕМИАС", self)
         import_button.setEnabled(False)
+        import_button.setObjectName("secondaryButton")
         create_button = QPushButton("Создать", self)
         create_button.clicked.connect(self.accept)
+
+        for button in (import_button, create_button):
+            button.setCursor(Qt.PointingHandCursor)
 
         buttons_layout.addWidget(import_button)
         buttons_layout.addStretch(1)
         buttons_layout.addWidget(create_button)
 
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(20)
-        main_layout.addWidget(header_label)
-        main_layout.addLayout(identity_layout)
-        main_layout.addWidget(separator)
-        main_layout.addLayout(grid_layout)
-        main_layout.addLayout(buttons_layout)
+        content_card = QFrame(self)
+        content_card.setObjectName("patientFormCard")
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(32, 32, 32, 32)
+        card_layout.setSpacing(24)
+        card_layout.addWidget(header_label)
+        card_layout.addLayout(identity_layout)
+        card_layout.addWidget(separator)
+        card_layout.addLayout(grid_layout)
+        card_layout.addLayout(buttons_layout)
+        content_card.setLayout(card_layout)
 
-        self.setLayout(main_layout)
+        outer_layout = QVBoxLayout()
+        outer_layout.setContentsMargins(24, 24, 24, 24)
+        outer_layout.setSpacing(0)
+        outer_layout.addWidget(content_card)
 
-        self.setFixedWidth(700)
+        self.setLayout(outer_layout)
+
+        self.setFixedWidth(720)
         self.setSizeGripEnabled(False)
+
+    def _apply_styles(self) -> None:
+        """Apply a lightweight stylesheet for the dialog."""
+
+        self.setStyleSheet(
+            """
+            QDialog {
+                background-color: #f2f4f7;
+            }
+            #patientFormCard {
+                background-color: #ffffff;
+                border-radius: 24px;
+                border: 1px solid #e1e7ef;
+            }
+            #dialogHeader {
+                font-size: 22px;
+                font-weight: 600;
+                color: #111827;
+            }
+            QLabel {
+                color: #1f2937;
+                font-size: 13px;
+            }
+            QLineEdit,
+            QComboBox {
+                border: 1px solid #d7dde7;
+                border-radius: 10px;
+                padding: 8px 12px;
+                background-color: #ffffff;
+            }
+            QLineEdit:focus,
+            QComboBox:focus {
+                border-color: #1f6feb;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #d7dde7;
+                border-radius: 8px;
+                background: #ffffff;
+                selection-background-color: #163455;
+                selection-color: #ffffff;
+            }
+            QRadioButton {
+                spacing: 6px;
+            }
+            QPushButton {
+                border: none;
+                border-radius: 12px;
+                padding: 10px 20px;
+                font-weight: 600;
+                background-color: #163455;
+                color: #ffffff;
+            }
+            QPushButton:disabled {
+                background-color: #cbd3df;
+                color: #8d9aad;
+            }
+            QPushButton#secondaryButton {
+                background-color: transparent;
+                color: #163455;
+                border: 1px solid #cbd3df;
+            }
+            #lineSeparator {
+                background-color: #ecf0f7;
+                min-height: 1px;
+                max-height: 1px;
+            }
+            """
+        )
 
     def collected_data(self) -> Dict[str, str]:
         """Return the current values from the input fields."""

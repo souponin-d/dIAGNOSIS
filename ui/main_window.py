@@ -698,26 +698,26 @@ class MainWindow(QMainWindow):
 
         patient_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        right_column = QWidget(info_tab)
-        right_column_layout = QVBoxLayout()
-        right_column_layout.setContentsMargins(0, 0, 0, 0)
-        right_column_layout.setSpacing(12)
-        right_column.setLayout(right_column_layout)
+        patient_column = QWidget(info_tab)
+        patient_column_layout = QVBoxLayout()
+        patient_column_layout.setContentsMargins(0, 0, 0, 0)
+        patient_column_layout.setSpacing(12)
+        patient_column.setLayout(patient_column_layout)
 
-        left_column = QWidget(info_tab)
-        left_column_layout = QVBoxLayout()
-        left_column_layout.setContentsMargins(0, 0, 0, 0)
-        left_column_layout.setSpacing(12)
-        left_column.setLayout(left_column_layout)
+        analytics_column = QWidget(info_tab)
+        analytics_column_layout = QVBoxLayout()
+        analytics_column_layout.setContentsMargins(0, 0, 0, 0)
+        analytics_column_layout.setSpacing(12)
+        analytics_column.setLayout(analytics_column_layout)
 
-        self._growth_chart_view = self._create_growth_chart(left_column)
-        left_column_layout.addWidget(self._growth_chart_view, 1)
+        self._growth_chart_view = self._create_growth_chart(analytics_column)
+        analytics_column_layout.addWidget(self._growth_chart_view, 1)
 
-        left_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        right_column.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        analytics_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        patient_column.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
-        info_columns.addWidget(left_column, 2)
-        info_columns.addWidget(right_column, 1)
+        info_columns.addWidget(patient_column, 1)
+        info_columns.addWidget(analytics_column, 2)
 
         patient_highlights = QFrame(info_tab)
         patient_highlights.setObjectName("patientHighlights")
@@ -729,7 +729,7 @@ class MainWindow(QMainWindow):
         patient_highlights_layout.setSpacing(16)
         patient_highlights.setLayout(patient_highlights_layout)
 
-        right_column_layout.addWidget(patient_scroll)
+        patient_column_layout.addWidget(patient_scroll)
 
         stage_container = QWidget(patient_highlights)
         stage_layout = QHBoxLayout()
@@ -775,8 +775,8 @@ class MainWindow(QMainWindow):
         patient_highlights_layout.addWidget(self._growth_table)
         patient_highlights_layout.addStretch(1)
 
-        right_column_layout.addWidget(patient_highlights)
-        right_column_layout.addStretch(1)
+        patient_column_layout.addWidget(patient_highlights)
+        patient_column_layout.addStretch(1)
 
         self._refresh_patient_information_view()
 
