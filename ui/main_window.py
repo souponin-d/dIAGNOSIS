@@ -1087,8 +1087,7 @@ class MainWindow(QMainWindow):
             return
 
         if not self._patient_data:
-            zero_values = [0.0] * len(self._GROWTH_TABLE_HEADERS)
-            self._set_growth_table_values(zero_values)
+            self._set_growth_table_values(())
             self._update_growth_chart_from_table()
             return
 
