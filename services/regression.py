@@ -21,6 +21,7 @@ except Exception:  # pragma: no cover - fallback when scientific stack is missin
 _MODEL_FILENAME: Final = "gpr_notreatment_reduced_optuna.joblib"
 _MODEL_PATH: Final = Path(__file__).resolve().parent.parent / "resources" / "models" / _MODEL_FILENAME
 _TIME_POINTS_MONTHS: Final = (3, 6, 12, 24)
+_CONFIDENCE_Z_SCORE: Final = 1.96
 _FEATURE_COLUMNS: Final = (
     "stage",
     "age",
@@ -55,21 +56,43 @@ else:  # pragma: no cover - executed when joblib is missing
 def regression_V_no_treatment(patient_data: Mapping[str, str] | None = None) -> list[float]:
     """Predict tumor size evolution at predefined horizons."""
 
+    mean_values, _, _ = regression_V_no_treatment_with_ci(patient_data)
+    return [round(value, 2) for value in mean_values]
+
+
+def regression_V_no_treatment_with_ci(
+    patient_data: Mapping[str, str] | None = None,
+) -> tuple[list[float], list[float], list[float]]:
+    """Predict tumor size evolution along with confidence intervals."""
+
     print("[regression] Starting tumor growth estimation.")
     features = _prepare_model_features(patient_data)
     if not features:
         print("[regression] Not enough structured features; returning zeros.")
-        return _zero_growth_values()
+        return _zero_growth_interval_values()
 
     print(f"[regression] Prepared features: {features}")
-    predictions = _predict_growth(features)
-    if predictions is None:
-        print("[regression] Prediction step failed; returning zeros.")
-        return _zero_growth_values()
+    interval_predictions = _predict_growth_with_uncertainty(features)
+    if interval_predictions is None:
+        print("[regression] Falling back to point predictions only.")
+        point_predictions = _predict_growth(features)
+        if point_predictions is None:
+            print("[regression] Prediction step failed; returning zeros.")
+            return _zero_growth_interval_values()
+        mean_predictions = point_predictions
+        low_predictions = point_predictions
+        high_predictions = point_predictions
+    else:
+        mean_predictions, low_predictions, high_predictions = interval_predictions
 
-    values = [features["tumor_size_before"], *predictions]
-    print(f"[regression] Final growth curve: {values}")
-    return [round(value, 2) for value in values]
+    baseline = float(features["tumor_size_before"])
+    mean_values = [baseline, *mean_predictions]
+    low_values = [baseline, *low_predictions]
+    high_values = [baseline, *high_predictions]
+    print("[regression] Final growth curve (mean):", mean_values)
+    print("[regression] Confidence interval low:", low_values)
+    print("[regression] Confidence interval high:", high_values)
+    return mean_values, low_values, high_values
 
 
 def _prepare_model_features(patient_data: Mapping[str, str] | None) -> dict[str, float | str] | None:
@@ -138,6 +161,52 @@ def _predict_growth(features: Mapping[str, float | str]) -> list[float] | None:
     return [float(baseline * ratio) for ratio in ratios]
 
 
+def _predict_growth_with_uncertainty(
+    features: Mapping[str, float | str],
+    z_value: float = _CONFIDENCE_Z_SCORE,
+) -> tuple[list[float], list[float], list[float]] | None:
+    if not _GPR_MODEL or np is None or pd is None:
+        print("[regression] Model or dependencies are unavailable.")
+        return None
+
+    try:
+        frame = pd.DataFrame([features], columns=_FEATURE_COLUMNS)
+        prep = _GPR_MODEL.named_steps["prep"]
+        gpr_multi = _GPR_MODEL.named_steps["gpr"]
+    except Exception as error:  # pragma: no cover - unexpected pipeline layout
+        print(f"[regression] Pipeline structure unexpected: {error}")
+        return None
+
+    try:
+        transformed = prep.transform(frame)
+    except Exception as error:  # pragma: no cover - preprocessing failure
+        print(f"[regression] Preprocessing failed: {error}")
+        return None
+
+    means: list[float] = []
+    stds: list[float] = []
+    try:
+        for estimator in gpr_multi.estimators_:
+            mu, sigma = estimator.predict(transformed, return_std=True)
+            means.append(float(mu[0]))
+            stds.append(float(sigma[0]))
+    except Exception as error:  # pragma: no cover - prediction failure
+        print(f"[regression] Failed to obtain uncertainty estimates: {error}")
+        return None
+
+    mean_array = np.array(means)
+    std_array = np.array(stds)
+    ratios_mean = np.exp(mean_array)
+    ratios_low = np.exp(mean_array - z_value * std_array)
+    ratios_high = np.exp(mean_array + z_value * std_array)
+    baseline = float(features["tumor_size_before"])
+    return (
+        [float(baseline * ratio) for ratio in ratios_mean],
+        [float(baseline * ratio) for ratio in ratios_low],
+        [float(baseline * ratio) for ratio in ratios_high],
+    )
+
+
 def _parse_numeric_value(value: str | None) -> float | None:
     if not value:
         return None
@@ -198,3 +267,8 @@ def _parse_marker_status(value: str | None) -> bool | None:
 
 def _zero_growth_values() -> list[float]:
     return [0.0] * (len(_TIME_POINTS_MONTHS) + 1)
+
+
+def _zero_growth_interval_values() -> tuple[list[float], list[float], list[float]]:
+    zeros = _zero_growth_values()
+    return zeros.copy(), zeros.copy(), zeros.copy()
