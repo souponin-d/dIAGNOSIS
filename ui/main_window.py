@@ -27,6 +27,7 @@ from PySide6.QtCore import (
     QPointF,
     QSize,
     Qt,
+    QTimer,
     QVariantAnimation,
 )
 from PySide6.QtGui import (
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGraphicsColorizeEffect,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -228,6 +230,9 @@ class MainWindow(QMainWindow):
         self._growth_ci_animation_points_high: list[tuple[float, float]] = []
         self._therapy_log_view: QTextBrowser | None = None
         self._forecast_charts: dict[str, dict[str, Any]] = {}
+        self._forecast_chart_blocks: list[QWidget] = []
+        self._forecast_entry_animation_done = False
+        self._forecast_entry_animations: list[QPropertyAnimation] = []
 
         self._init_ui()
         self._center_on_screen()
@@ -593,6 +598,10 @@ class MainWindow(QMainWindow):
     def _init_project_view(self, project_widget: QWidget) -> None:
         project_widget.setAttribute(Qt.WA_StyledBackground, True)
         project_widget.setStyleSheet("background-color: #d9d9d9;")
+
+        self._forecast_chart_blocks = []
+        self._forecast_entry_animation_done = False
+        self._forecast_entry_animations = []
 
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1062,6 +1071,8 @@ class MainWindow(QMainWindow):
         section = self._tab_widget.tabText(index)
         if section:
             self._update_active_section(section)
+            if section == "Прогноз":
+                self._ensure_forecast_tab_animation()
 
     def _update_active_section(self, section: str) -> None:
         self._current_section = section
@@ -1217,18 +1228,62 @@ class MainWindow(QMainWindow):
             "points": {},
         }
 
+        self._forecast_chart_blocks.append(container)
+
         return container
+
+    def _ensure_forecast_tab_animation(self) -> None:
+        """Animate the forecast charts the first time the tab becomes visible."""
+
+        if self._forecast_entry_animation_done or not self._forecast_chart_blocks:
+            return
+
+        self._forecast_entry_animation_done = True
+        self._forecast_entry_animations = []
+        delay_step_ms = 150
+
+        for index, widget in enumerate(self._forecast_chart_blocks):
+            if widget is None:
+                continue
+            effect = QGraphicsOpacityEffect(widget)
+            widget.setGraphicsEffect(effect)
+            effect.setOpacity(0.0)
+
+            animation = QPropertyAnimation(effect, b"opacity", widget)
+            animation.setDuration(600)
+            animation.setStartValue(0.0)
+            animation.setEndValue(1.0)
+            animation.setEasingCurve(QEasingCurve.InOutCubic)
+
+            def _remove_animation(anim: QPropertyAnimation) -> None:
+                try:
+                    self._forecast_entry_animations.remove(anim)
+                except ValueError:
+                    pass
+
+            animation.finished.connect(lambda anim=animation: _remove_animation(anim))
+            self._forecast_entry_animations.append(animation)
+
+            delay_ms = index * delay_step_ms
+            if delay_ms:
+                QTimer.singleShot(delay_ms, animation.start)
+            else:
+                animation.start()
 
     def _update_growth_chart(
         self,
-        values: Sequence[float],
+        values: Sequence[float | None],
         ci_low: Sequence[float] | None = None,
         ci_high: Sequence[float] | None = None,
     ) -> None:
         if not self._growth_series:
             return
 
-        points = [(float(index), value) for index, value in enumerate(values)]
+        points = [
+            (float(index), float(value))
+            for index, value in enumerate(values)
+            if value is not None
+        ]
         ci_points_low: list[tuple[float, float]] | None = None
         ci_points_high: list[tuple[float, float]] | None = None
 
@@ -1241,7 +1296,7 @@ class MainWindow(QMainWindow):
             ci_points_low = [(float(index), value) for index, value in enumerate(ci_low)]
             ci_points_high = [(float(index), value) for index, value in enumerate(ci_high)]
 
-        combined_values: list[float] = list(values)
+        combined_values: list[float] = [float(value) for value in values if value is not None]
         if ci_low:
             combined_values.extend(ci_low)
         if ci_high:
@@ -1582,6 +1637,17 @@ class MainWindow(QMainWindow):
             self._update_forecast_views(())
             return
 
+        dataset_values = self._get_dataset_growth_values()
+        if dataset_values:
+            self._set_growth_table_values(dataset_values)
+            self._update_growth_chart(dataset_values)
+            forecast_values = self._prepare_forecast_measurements(dataset_values)
+            if forecast_values:
+                self._update_forecast_views(forecast_values)
+            else:
+                self._update_forecast_views(())
+            return
+
         mean_values, ci_low, ci_high = regression_V_no_treatment_with_ci(
             self._patient_data
         )
@@ -1589,14 +1655,64 @@ class MainWindow(QMainWindow):
         self._update_growth_chart(mean_values, ci_low, ci_high)
         self._update_forecast_views(mean_values)
 
-    def _set_growth_table_values(self, values: Sequence[float]) -> None:
+    def _get_dataset_growth_values(self) -> list[float | None]:
+        if not self._patient_data:
+            return []
+
+        dataset_keys = (
+            "tumor_size_before",
+            "tumor_size_3m",
+            "tumor_size_6m",
+            "tumor_size_12m",
+            "tumor_size_24m",
+        )
+        values: list[float | None] = []
+        has_value = False
+        for key in dataset_keys:
+            numeric_value = self._parse_dataset_float(self._patient_data.get(key))
+            if numeric_value is not None:
+                has_value = True
+            values.append(numeric_value)
+        return values if has_value else []
+
+    @staticmethod
+    def _parse_dataset_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            if not (value == value):  # NaN check
+                return None
+            return float(value)
+
+        text = str(value).strip().replace(",", ".")
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    def _prepare_forecast_measurements(
+        self, values: Sequence[float | None]
+    ) -> list[float] | None:
+        if len(values) != len(self._GROWTH_TABLE_HEADERS):
+            return None
+
+        measurements: list[float] = []
+        for value in values:
+            if value is None:
+                return None
+            measurements.append(float(value))
+        return measurements
+
+    def _set_growth_table_values(self, values: Sequence[float | None]) -> None:
         if not self._growth_table:
             return
 
         column_count = self._growth_table.columnCount()
         for column in range(column_count):
-            if column < len(values):
-                numeric_value = values[column]
+            if column < len(values) and values[column] is not None:
+                numeric_value = float(values[column])
                 text = f"{numeric_value:.2f}".rstrip("0").rstrip(".")
             else:
                 text = "—"
