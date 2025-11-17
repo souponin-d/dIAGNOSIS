@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -226,8 +227,26 @@ class CreatePatientDialog(QDialog):
         self.accept()
 
     def _on_import_dataset_clicked(self) -> None:
+        patient_id, accepted = QInputDialog.getText(
+            self,
+            "Загрузка из датасета",
+            "Укажите patient_id для загрузки:",
+            text=self._DATASET_PATIENT_ID,
+        )
+        if not accepted:
+            return
+
+        patient_id = patient_id.strip()
+        if not patient_id:
+            QMessageBox.warning(
+                self,
+                "Идентификатор не указан",
+                "Введите идентификатор пациента, чтобы импортировать данные.",
+            )
+            return
+
         try:
-            record = self._load_dataset_record(self._DATASET_PATIENT_ID)
+            record = self._load_dataset_record(patient_id)
         except FileNotFoundError:
             QMessageBox.critical(
                 self,

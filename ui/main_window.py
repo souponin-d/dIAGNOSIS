@@ -376,9 +376,11 @@ class MainWindow(QMainWindow):
 
         create_action = QAction("Создать...", self)
         create_action.triggered.connect(self._open_create_dialog)
+        create_action.setEnabled(False)
         file_menu.addAction(create_action)
 
         open_action = QAction("Открыть...", self)
+        open_action.setEnabled(False)
         file_menu.addAction(open_action)
 
         save_action = QAction("Сохранить", self)
@@ -386,6 +388,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(save_action)
 
         save_as_action = QAction("Сохранить как...", self)
+        save_as_action.setEnabled(False)
         file_menu.addAction(save_as_action)
 
         file_menu.addSeparator()
@@ -398,7 +401,10 @@ class MainWindow(QMainWindow):
 
         exit_action = QAction("Выход", self)
         exit_action.triggered.connect(self.close)
+        exit_action.setEnabled(False)
         file_menu.addAction(exit_action)
+
+        file_menu.menuAction().setEnabled(False)
 
         help_menu = menu_bar.addMenu("Помощь")
 
@@ -409,6 +415,8 @@ class MainWindow(QMainWindow):
         help_action = QAction("Справка", self)
         help_action.setEnabled(False)
         help_menu.addAction(help_action)
+
+        help_menu.menuAction().setEnabled(False)
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
@@ -863,6 +871,26 @@ class MainWindow(QMainWindow):
                         border-radius: 12px;
                         font-size: 14px;
                         padding: 16px;
+                    }
+                    QTextBrowser#therapyOutput QScrollBar:vertical {
+                        width: 10px;
+                        background: transparent;
+                        margin: 12px 2px 12px 0;
+                    }
+                    QTextBrowser#therapyOutput QScrollBar::handle:vertical {
+                        background: rgba(22, 52, 85, 140);
+                        border-radius: 5px;
+                        min-height: 30px;
+                    }
+                    QTextBrowser#therapyOutput QScrollBar::handle:vertical:hover {
+                        background: rgba(22, 52, 85, 180);
+                    }
+                    QTextBrowser#therapyOutput QScrollBar::add-line:vertical,
+                    QTextBrowser#therapyOutput QScrollBar::sub-line:vertical,
+                    QTextBrowser#therapyOutput QScrollBar::add-page:vertical,
+                    QTextBrowser#therapyOutput QScrollBar::sub-page:vertical {
+                        background: none;
+                        border: none;
                     }
                     """
                 )
