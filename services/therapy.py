@@ -1,3 +1,19 @@
+from collections.abc import Mapping, Sequence
+import html
+
+
+SECTION_TITLES = {
+    "diagnostic_check": "Диагностический блок",
+    "surgery": "Хирургия",
+    "hormone_therapy": "Гормонотерапия",
+    "chemotherapy": "Химиотерапия",
+    "anti_her2_therapy": "Анти-HER2",
+    "other_therapy": "Дополнительная терапия",
+    "notes": "Примечания",
+}
+SECTION_ORDER = tuple(SECTION_TITLES.keys())
+
+
 def generate_treatment_recommendations(
     age,
     gender,
@@ -315,36 +331,63 @@ def generate_treatment_recommendations(
     return filtered_rec
 
 
-# === ПРИМЕР ИСПОЛЬЗОВАНИЯ ===
-if __name__ == "__main__":
-    result = generate_treatment_recommendations(
-        age=25,
-        gender='female',
-        menopausal_status="perimenopausal",
-        ER=True,
-        PR=False,
-        HER2=False,
-        BRCA_status=None, # <-- Измените на True или False для другого сценария
-        Ki67=70,
-        T="T3",
-        grade=2,
-        N="N2",
-        M="M0",
-        e_cadherin_status=None,
-        surgery=False
-    )
+def format_therapy_recommendations(
+    recommendations: Mapping[str, Sequence[str]] | None,
+) -> str:
+    if not recommendations:
+        return "<p>Рекомендации пока недоступны.</p>"
 
-    for section, items in result.items():
-        if items:
-            section_names = {
-                "diagnostic_check": "Диагностическая проверка",
-                "surgery": "Хирургическое лечение",
-                "hormone_therapy": "Гормонотерапия",
-                "chemotherapy": "Химиотерапия",
-                "anti_her2_therapy": "Анти-HER2 терапия",
-                "other_therapy": "Прочая терапия",
-                "notes": "Примечания"
-            }
-            print(f"\n{section_names.get(section, section)}:")
-            for item in items:
-                print(f"  - {item}")
+    sections: list[str] = []
+    style_block = """
+    <style>
+        .therapy-section-wrapper { margin-bottom: 24px; }
+        .therapy-section h3 {
+            margin: 0 0 8px;
+            font-size: 17px;
+            color: #1f305a;
+        }
+        .therapy-section ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .therapy-section li {
+            margin-bottom: 6px;
+            line-height: 1.4;
+        }
+    </style>
+    """.strip()
+
+    def render_section(section_key: str, entries: Sequence[str]) -> None:
+        if not entries:
+            return
+        title = SECTION_TITLES.get(section_key, section_key)
+        safe_entries = "".join(
+            f"<li>{html.escape(entry)}</li>" for entry in entries if entry
+        )
+        if safe_entries:
+            sections.append(
+                """
+                <div class="therapy-section">
+                    <h3>{title}</h3>
+                    <ul>{items}</ul>
+                </div>
+                """.strip().format(title=html.escape(title), items=safe_entries)
+            )
+
+    for section_name in SECTION_ORDER:
+        entries = recommendations.get(section_name)
+        if entries:
+            render_section(section_name, entries)
+
+    extra_sections = [
+        key for key in recommendations.keys() if key not in SECTION_TITLES
+    ]
+    for extra_key in extra_sections:
+        render_section(extra_key, recommendations[extra_key])
+
+    if not sections:
+        return "<p>Рекомендации пока недоступны.</p>"
+
+    return style_block + "\n" + "\n".join(
+        f"<div class='therapy-section-wrapper'>{section}</div>" for section in sections
+    )
