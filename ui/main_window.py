@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 from pathlib import Path
 from typing import Optional, Sequence
@@ -30,7 +31,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMainWindow,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QToolButton,
     QTabWidget,
+    QTextBrowser,
     QVBoxLayout,
     QWidget
 )
@@ -51,7 +52,10 @@ except ImportError:  # pragma: no cover - fallback for PySide6 versions without 
 from config import AppConfig
 from core.patient_features import calculate_age, calculate_stage, normalize_category
 from services.regression import regression_V_no_treatment
-from services.therapy import generate_treatment_recommendations
+from services.therapy import (
+    format_therapy_recommendations,
+    generate_treatment_recommendations,
+)
 from ui.dialogs.create_patient_dialog import CreatePatientDialog
 
 
@@ -186,7 +190,7 @@ class MainWindow(QMainWindow):
         self._growth_axis_y: QValueAxis | None = None
         self._growth_animation: QVariantAnimation | None = None
         self._growth_animation_points: list[tuple[float, float]] = []
-        self._therapy_log_view: QPlainTextEdit | None = None
+        self._therapy_log_view: QTextBrowser | None = None
 
         self._init_ui()
         self._center_on_screen()
@@ -848,33 +852,22 @@ class MainWindow(QMainWindow):
                 therapy_title.setStyleSheet("font-size: 20px; font-weight: 600;")
                 therapy_layout.addWidget(therapy_title)
 
-                therapy_hint = QLabel(
-                    "Отчёт формируется функцией из therapy.py."
-                    " Ниже отображаются все диагностические сообщения и разделы,"
-                    " которые она возвращает.",
-                    therapy_background,
-                )
-                therapy_hint.setWordWrap(True)
-                therapy_hint.setStyleSheet("color: #555; font-size: 14px;")
-                therapy_layout.addWidget(therapy_hint)
-
-                self._therapy_log_view = QPlainTextEdit(therapy_background)
+                self._therapy_log_view = QTextBrowser(therapy_background)
                 self._therapy_log_view.setObjectName("therapyOutput")
                 self._therapy_log_view.setReadOnly(True)
                 self._therapy_log_view.setStyleSheet(
                     """
-                    QPlainTextEdit#therapyOutput {
+                    QTextBrowser#therapyOutput {
                         background-color: #f5f7fb;
                         border: 1px solid #d6dce7;
                         border-radius: 12px;
-                        font-family: 'SF Mono', 'Consolas', monospace;
-                        font-size: 13px;
-                        padding: 12px;
+                        font-size: 14px;
+                        padding: 16px;
                     }
                     """
                 )
-                self._therapy_log_view.setPlainText(
-                    "Рекомендации будут показаны после заполнения данных о пациенте."
+                self._therapy_log_view.setHtml(
+                    "<p style='color:#666;'>Рекомендации будут показаны после заполнения данных о пациенте.</p>"
                 )
                 therapy_layout.addWidget(self._therapy_log_view, 1)
 
@@ -1296,61 +1289,40 @@ class MainWindow(QMainWindow):
         return status is False
 
     def _log_therapy_recommendations(self) -> None:
-        log_lines: list[str] = []
-
-        def append(message: str) -> None:
-            log_lines.append(message)
-            print(message)
-
         if not self._patient_data:
-            append("[therapy] Недостаточно данных для расчёта рекомендаций.")
-            self._update_therapy_text(log_lines)
+            self._update_therapy_text(
+                "<p>Недостаточно данных для расчёта рекомендаций. Заполните клинические параметры пациента.</p>"
+            )
             return
 
         payload = self._build_therapy_payload()
         if not payload:
-            append("[therapy] Недостаточно данных для расчёта рекомендаций.")
-            self._update_therapy_text(log_lines)
+            self._update_therapy_text(
+                "<p>Недостаточно данных для расчёта рекомендаций. Проверьте заполнение показателей T, N, M и статусов ER/PR/HER2.</p>"
+            )
             return
 
-        append(f"[therapy] Исходные данные для генерации рекомендаций: {payload}")
         try:
             result = generate_treatment_recommendations(**payload)
         except Exception as error:
-            append(f"[therapy] Ошибка при расчёте рекомендаций: {error}")
-            self._update_therapy_text(log_lines)
+            self._update_therapy_text(
+                f"<p>Ошибка при расчёте рекомендаций: {html.escape(str(error))}</p>"
+            )
             return
 
         if not result:
-            append("[therapy] Функция рекомендаций вернула пустой ответ.")
-            self._update_therapy_text(log_lines)
+            self._update_therapy_text("<p>Функция рекомендаций вернула пустой ответ.</p>")
             return
 
-        section_names = {
-            "diagnostic_check": "Диагностический блок",
-            "surgery": "Хирургия",
-            "hormone_therapy": "Гормонотерапия",
-            "chemotherapy": "Химиотерапия",
-            "anti_her2_therapy": "Анти-HER2",
-            "other_therapy": "Дополнительно",
-            "notes": "Примечания",
-        }
-        append("[therapy] --- Рекомендации по лечению ---")
-        for section, entries in result.items():
-            if not entries:
-                continue
-            append(f"[therapy] {section_names.get(section, section)}:")
-            for entry in entries:
-                append(f"  - {entry}")
+        formatted_result = format_therapy_recommendations(result)
+        self._update_therapy_text(formatted_result)
 
-        self._update_therapy_text(log_lines)
-
-    def _update_therapy_text(self, lines: Sequence[str]) -> None:
+    def _update_therapy_text(self, html_content: str) -> None:
         if not self._therapy_log_view:
             return
 
-        content = "\n".join(lines) if lines else "Рекомендации пока недоступны."
-        self._therapy_log_view.setPlainText(content)
+        content = html_content or "<p>Рекомендации пока недоступны.</p>"
+        self._therapy_log_view.setHtml(content)
 
     def _build_therapy_payload(self) -> dict[str, object] | None:
         if not self._patient_data:
