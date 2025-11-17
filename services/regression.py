@@ -5,9 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
+import logging
 import re
+import warnings
 
 from core.patient_features import calculate_age, calculate_stage
+
+warnings.filterwarnings("ignore")
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+logger.propagate = False
 
 try:  # pragma: no cover - optional dependency during development
     import joblib  # type: ignore
@@ -44,12 +52,12 @@ _ROMAN_STAGE_VALUES: Final = {
 if joblib is not None:  # pragma: no branch - executed when scientific stack available
     try:
         _GPR_MODEL = joblib.load(_MODEL_PATH)
-        print(f"[regression] Gaussian Process model loaded from {_MODEL_PATH}.")
+        logger.debug("[regression] Gaussian Process model loaded from %s.", _MODEL_PATH)
     except Exception as error:  # pragma: no cover - I/O or deserialization failure
-        print(f"[regression] Failed to load model: {error}")
+        logger.debug("[regression] Failed to load model: %s", error)
         _GPR_MODEL = None
 else:  # pragma: no cover - executed when joblib is missing
-    print("[regression] Scientific stack is unavailable; predictions will be disabled.")
+    logger.debug("[regression] Scientific stack is unavailable; predictions will be disabled.")
     _GPR_MODEL = None
 
 
@@ -65,19 +73,19 @@ def regression_V_no_treatment_with_ci(
 ) -> tuple[list[float], list[float], list[float]]:
     """Predict tumor size evolution along with confidence intervals."""
 
-    print("[regression] Starting tumor growth estimation.")
+    logger.debug("[regression] Starting tumor growth estimation.")
     features = _prepare_model_features(patient_data)
     if not features:
-        print("[regression] Not enough structured features; returning zeros.")
+        logger.debug("[regression] Not enough structured features; returning zeros.")
         return _zero_growth_interval_values()
 
-    print(f"[regression] Prepared features: {features}")
+    logger.debug("[regression] Prepared features: %s", features)
     interval_predictions = _predict_growth_with_uncertainty(features)
     if interval_predictions is None:
-        print("[regression] Falling back to point predictions only.")
+        logger.debug("[regression] Falling back to point predictions only.")
         point_predictions = _predict_growth(features)
         if point_predictions is None:
-            print("[regression] Prediction step failed; returning zeros.")
+            logger.debug("[regression] Prediction step failed; returning zeros.")
             return _zero_growth_interval_values()
         mean_predictions = point_predictions
         low_predictions = point_predictions
@@ -89,9 +97,9 @@ def regression_V_no_treatment_with_ci(
     mean_values = [baseline, *mean_predictions]
     low_values = [baseline, *low_predictions]
     high_values = [baseline, *high_predictions]
-    print("[regression] Final growth curve (mean):", mean_values)
-    print("[regression] Confidence interval low:", low_values)
-    print("[regression] Confidence interval high:", high_values)
+    logger.debug("[regression] Final growth curve (mean): %s", mean_values)
+    logger.debug("[regression] Confidence interval low: %s", low_values)
+    logger.debug("[regression] Confidence interval high: %s", high_values)
     return mean_values, low_values, high_values
 
 
@@ -140,24 +148,24 @@ def _prepare_model_features(patient_data: Mapping[str, str] | None) -> dict[str,
 
 def _predict_growth(features: Mapping[str, float | str]) -> list[float] | None:
     if not _GPR_MODEL or np is None or pd is None:
-        print("[regression] Model or dependencies are unavailable.")
+        logger.debug("[regression] Model or dependencies are unavailable.")
         return None
 
     try:
-        print("[regression] Running inference through the Gaussian Process model.")
+        logger.debug("[regression] Running inference through the Gaussian Process model.")
         frame = pd.DataFrame([features], columns=_FEATURE_COLUMNS)
         y_pred_log = _GPR_MODEL.predict(frame)
     except Exception as error:  # pragma: no cover - prediction failure
-        print(f"[regression] Prediction error: {error}")
+        logger.debug("[regression] Prediction error: %s", error)
         return None
 
     if y_pred_log is None or len(y_pred_log) == 0:
-        print("[regression] Model returned no predictions.")
+        logger.debug("[regression] Model returned no predictions.")
         return None
 
     baseline = float(features["tumor_size_before"])
     ratios = np.exp(y_pred_log[0])
-    print(f"[regression] Model raw output (log-space): {y_pred_log}")
+    logger.debug("[regression] Model raw output (log-space): %s", y_pred_log)
     return [float(baseline * ratio) for ratio in ratios]
 
 
@@ -166,7 +174,7 @@ def _predict_growth_with_uncertainty(
     z_value: float = _CONFIDENCE_Z_SCORE,
 ) -> tuple[list[float], list[float], list[float]] | None:
     if not _GPR_MODEL or np is None or pd is None:
-        print("[regression] Model or dependencies are unavailable.")
+        logger.debug("[regression] Model or dependencies are unavailable.")
         return None
 
     try:
@@ -174,13 +182,13 @@ def _predict_growth_with_uncertainty(
         prep = _GPR_MODEL.named_steps["prep"]
         gpr_multi = _GPR_MODEL.named_steps["gpr"]
     except Exception as error:  # pragma: no cover - unexpected pipeline layout
-        print(f"[regression] Pipeline structure unexpected: {error}")
+        logger.debug("[regression] Pipeline structure unexpected: %s", error)
         return None
 
     try:
         transformed = prep.transform(frame)
     except Exception as error:  # pragma: no cover - preprocessing failure
-        print(f"[regression] Preprocessing failed: {error}")
+        logger.debug("[regression] Preprocessing failed: %s", error)
         return None
 
     means: list[float] = []
@@ -191,7 +199,7 @@ def _predict_growth_with_uncertainty(
             means.append(float(mu[0]))
             stds.append(float(sigma[0]))
     except Exception as error:  # pragma: no cover - prediction failure
-        print(f"[regression] Failed to obtain uncertainty estimates: {error}")
+        logger.debug("[regression] Failed to obtain uncertainty estimates: %s", error)
         return None
 
     mean_array = np.array(means)
