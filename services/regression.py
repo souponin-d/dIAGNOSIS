@@ -36,24 +36,32 @@ _FEATURE_COLUMNS: Final = (
 if joblib is not None:  # pragma: no branch - executed when scientific stack available
     try:
         _GPR_MODEL = joblib.load(_MODEL_PATH)
-    except Exception:  # pragma: no cover - I/O or deserialization failure
+        print(f"[regression] Gaussian Process model loaded from {_MODEL_PATH}.")
+    except Exception as error:  # pragma: no cover - I/O or deserialization failure
+        print(f"[regression] Failed to load model: {error}")
         _GPR_MODEL = None
 else:  # pragma: no cover - executed when joblib is missing
+    print("[regression] Scientific stack is unavailable; predictions will be disabled.")
     _GPR_MODEL = None
 
 
 def regression_V_no_treatment(patient_data: Mapping[str, str] | None = None) -> list[float]:
     """Predict tumor size evolution at predefined horizons."""
 
+    print("[regression] Starting tumor growth estimation.")
     features = _prepare_model_features(patient_data)
     if not features:
+        print("[regression] Not enough structured features; returning zeros.")
         return _zero_growth_values()
 
+    print(f"[regression] Prepared features: {features}")
     predictions = _predict_growth(features)
     if predictions is None:
+        print("[regression] Prediction step failed; returning zeros.")
         return _zero_growth_values()
 
     values = [features["tumor_size_before"], *predictions]
+    print(f"[regression] Final growth curve: {values}")
     return [round(value, 2) for value in values]
 
 
@@ -101,19 +109,24 @@ def _prepare_model_features(patient_data: Mapping[str, str] | None) -> dict[str,
 
 def _predict_growth(features: Mapping[str, float | str]) -> list[float] | None:
     if not _GPR_MODEL or np is None or pd is None:
+        print("[regression] Model or dependencies are unavailable.")
         return None
 
     try:
+        print("[regression] Running inference through the Gaussian Process model.")
         frame = pd.DataFrame([features], columns=_FEATURE_COLUMNS)
         y_pred_log = _GPR_MODEL.predict(frame)
-    except Exception:  # pragma: no cover - prediction failure
+    except Exception as error:  # pragma: no cover - prediction failure
+        print(f"[regression] Prediction error: {error}")
         return None
 
     if y_pred_log is None or len(y_pred_log) == 0:
+        print("[regression] Model returned no predictions.")
         return None
 
     baseline = float(features["tumor_size_before"])
     ratios = np.exp(y_pred_log[0])
+    print(f"[regression] Model raw output (log-space): {y_pred_log}")
     return [float(baseline * ratio) for ratio in ratios]
 
 
