@@ -7,7 +7,14 @@ import re
 from pathlib import Path
 from typing import Optional, Sequence
 
-from PySide6.QtCharts import QCategoryAxis, QChart, QChartView, QLineSeries, QValueAxis
+from PySide6.QtCharts import (
+    QAreaSeries,
+    QCategoryAxis,
+    QChart,
+    QChartView,
+    QLineSeries,
+    QValueAxis,
+)
 from PySide6.QtCore import (
     QEvent,
     QEasingCurve,
@@ -19,7 +26,17 @@ from PySide6.QtCore import (
     Qt,
     QVariantAnimation,
 )
-from PySide6.QtGui import QAction, QIcon, QKeyEvent, QMouseEvent, QPainter, QPixmap, QResizeEvent
+from PySide6.QtGui import (
+    QAction,
+    QIcon,
+    QKeyEvent,
+    QMouseEvent,
+    QPainter,
+    QPixmap,
+    QResizeEvent,
+    QColor,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -51,7 +68,10 @@ except ImportError:  # pragma: no cover - fallback for PySide6 versions without 
 
 from config import AppConfig
 from core.patient_features import calculate_age, calculate_stage, normalize_category
-from services.regression import regression_V_no_treatment
+from services.regression import (
+    regression_V_no_treatment,
+    regression_V_no_treatment_with_ci,
+)
 from services.therapy import (
     format_therapy_recommendations,
     generate_treatment_recommendations,
@@ -186,10 +206,15 @@ class MainWindow(QMainWindow):
         self._growth_table: QTableWidget | None = None
         self._growth_chart_view: QChartView | None = None
         self._growth_series: QLineSeries | None = None
+        self._growth_ci_upper_series: QLineSeries | None = None
+        self._growth_ci_lower_series: QLineSeries | None = None
+        self._growth_ci_area: QAreaSeries | None = None
         self._growth_axis_x: QCategoryAxis | None = None
         self._growth_axis_y: QValueAxis | None = None
         self._growth_animation: QVariantAnimation | None = None
         self._growth_animation_points: list[tuple[float, float]] = []
+        self._growth_ci_animation_points_low: list[tuple[float, float]] = []
+        self._growth_ci_animation_points_high: list[tuple[float, float]] = []
         self._therapy_log_view: QTextBrowser | None = None
 
         self._init_ui()
@@ -1003,7 +1028,24 @@ class MainWindow(QMainWindow):
 
     def _create_growth_chart(self, parent: QWidget) -> QChartView:
         self._growth_series = QLineSeries()
+        self._growth_ci_upper_series = QLineSeries()
+        self._growth_ci_lower_series = QLineSeries()
+        self._growth_ci_area = QAreaSeries(
+            self._growth_ci_upper_series, self._growth_ci_lower_series
+        )
+        self._growth_ci_area.setName("95% ДИ")
+        ci_color = QColor(52, 120, 206)
+        ci_brush = QColor(ci_color)
+        ci_brush.setAlphaF(0.18)
+        self._growth_ci_area.setBrush(ci_brush)
+        ci_pen = QPen(ci_color)
+        ci_pen.setWidthF(1.0)
+        ci_pen.setStyle(Qt.DashLine)
+        self._growth_ci_area.setPen(ci_pen)
+        self._growth_ci_area.setVisible(False)
+
         chart = QChart()
+        chart.addSeries(self._growth_ci_area)
         chart.addSeries(self._growth_series)
         chart.legend().hide()
         chart.setTitle("Оценка изменения объёма опухоли без лечения")
@@ -1019,11 +1061,13 @@ class MainWindow(QMainWindow):
         if self._GROWTH_TABLE_HEADERS:
             self._growth_axis_x.setRange(0.0, float(len(self._GROWTH_TABLE_HEADERS) - 1))
         chart.addAxis(self._growth_axis_x, Qt.AlignBottom)
+        self._growth_ci_area.attachAxis(self._growth_axis_x)
         self._growth_series.attachAxis(self._growth_axis_x)
 
         self._growth_axis_y = QValueAxis()
         self._growth_axis_y.setLabelFormat("%.1f")
         chart.addAxis(self._growth_axis_y, Qt.AlignLeft)
+        self._growth_ci_area.attachAxis(self._growth_axis_y)
         self._growth_series.attachAxis(self._growth_axis_y)
 
         chart_view = QChartView(chart, parent)
@@ -1033,25 +1077,36 @@ class MainWindow(QMainWindow):
 
         return chart_view
 
-    def _update_growth_chart_from_table(self) -> None:
-        if not self._growth_table or not self._growth_series:
+    def _update_growth_chart(
+        self,
+        values: Sequence[float],
+        ci_low: Sequence[float] | None = None,
+        ci_high: Sequence[float] | None = None,
+    ) -> None:
+        if not self._growth_series:
             return
 
-        values: list[float] = []
-        points: list[tuple[float, float]] = []
-        for column in range(self._growth_table.columnCount()):
-            item = self._growth_table.item(0, column)
-            if not item:
-                continue
-            try:
-                value = float(item.text().replace(",", "."))
-            except ValueError:
-                continue
-            values.append(value)
-            points.append((float(column), value))
+        points = [(float(index), value) for index, value in enumerate(values)]
+        ci_points_low: list[tuple[float, float]] | None = None
+        ci_points_high: list[tuple[float, float]] | None = None
 
-        self._update_growth_axis_range(values)
-        self._start_growth_animation(points)
+        if (
+            ci_low
+            and ci_high
+            and len(ci_low) == len(values)
+            and len(ci_high) == len(values)
+        ):
+            ci_points_low = [(float(index), value) for index, value in enumerate(ci_low)]
+            ci_points_high = [(float(index), value) for index, value in enumerate(ci_high)]
+
+        combined_values: list[float] = list(values)
+        if ci_low:
+            combined_values.extend(ci_low)
+        if ci_high:
+            combined_values.extend(ci_high)
+
+        self._update_growth_axis_range(combined_values)
+        self._start_growth_animation(points, ci_points_low, ci_points_high)
 
     def _update_growth_axis_range(self, values: Sequence[float]) -> None:
         if not self._growth_axis_y:
@@ -1066,7 +1121,12 @@ class MainWindow(QMainWindow):
 
         self._growth_axis_y.setRange(0.0, 1.0)
 
-    def _start_growth_animation(self, points: Sequence[tuple[float, float]]) -> None:
+    def _start_growth_animation(
+        self,
+        points: Sequence[tuple[float, float]],
+        ci_low: Sequence[tuple[float, float]] | None = None,
+        ci_high: Sequence[tuple[float, float]] | None = None,
+    ) -> None:
         if not self._growth_series:
             return
 
@@ -1074,14 +1134,32 @@ class MainWindow(QMainWindow):
             self._growth_animation.stop()
 
         self._growth_animation_points = list(points)
+        self._growth_ci_animation_points_low = list(ci_low or [])
+        self._growth_ci_animation_points_high = list(ci_high or [])
+
+        has_ci = bool(
+            self._growth_ci_animation_points_low
+            and self._growth_ci_animation_points_high
+            and len(self._growth_ci_animation_points_low)
+            == len(self._growth_ci_animation_points_high)
+        )
+        if self._growth_ci_area:
+            self._growth_ci_area.setVisible(has_ci)
+        if not has_ci:
+            self._clear_ci_series()
 
         if not self._growth_animation_points:
-            self._growth_series.clear()
+            self._clear_growth_visuals()
             return
 
         if len(self._growth_animation_points) <= 1:
             final_points = [QPointF(x, y) for x, y in self._growth_animation_points]
             self._growth_series.replace(final_points)
+            if has_ci:
+                self._update_ci_series(
+                    [QPointF(x, y) for x, y in self._growth_ci_animation_points_low],
+                    [QPointF(x, y) for x, y in self._growth_ci_animation_points_high],
+                )
             return
 
         if not self._growth_animation:
@@ -1094,6 +1172,8 @@ class MainWindow(QMainWindow):
         self._growth_animation.setStartValue(0.0)
         self._growth_animation.setEndValue(float(len(self._growth_animation_points) - 1))
         self._growth_series.clear()
+        if has_ci:
+            self._clear_ci_series()
         self._growth_animation.start()
 
     def _handle_growth_animation_value(self, value: float) -> None:
@@ -1101,23 +1181,25 @@ class MainWindow(QMainWindow):
             return
 
         animation_value = float(value)
-        segment_index = int(animation_value)
-        displayed_points: list[QPointF] = []
-
-        for idx in range(min(segment_index + 1, len(self._growth_animation_points))):
-            x, y = self._growth_animation_points[idx]
-            displayed_points.append(QPointF(x, y))
-
-        next_index = segment_index + 1
-        if next_index < len(self._growth_animation_points):
-            start_x, start_y = self._growth_animation_points[segment_index]
-            end_x, end_y = self._growth_animation_points[next_index]
-            local_progress = animation_value - float(segment_index)
-            interpolated_x = start_x + (end_x - start_x) * local_progress
-            interpolated_y = start_y + (end_y - start_y) * local_progress
-            displayed_points.append(QPointF(interpolated_x, interpolated_y))
-
+        displayed_points = self._build_partial_points(
+            self._growth_animation_points, animation_value
+        )
         self._growth_series.replace(displayed_points)
+
+        has_ci = bool(
+            self._growth_ci_animation_points_low
+            and self._growth_ci_animation_points_high
+        )
+        if not has_ci:
+            return
+
+        low_points = self._build_partial_points(
+            self._growth_ci_animation_points_low, animation_value
+        )
+        high_points = self._build_partial_points(
+            self._growth_ci_animation_points_high, animation_value
+        )
+        self._update_ci_series(low_points, high_points)
 
     def _finalize_growth_animation(self) -> None:
         if not self._growth_series or not self._growth_animation_points:
@@ -1126,18 +1208,86 @@ class MainWindow(QMainWindow):
         final_points = [QPointF(x, y) for x, y in self._growth_animation_points]
         self._growth_series.replace(final_points)
 
+        has_ci = bool(
+            self._growth_ci_animation_points_low
+            and self._growth_ci_animation_points_high
+        )
+        if not has_ci:
+            return
+
+        self._update_ci_series(
+            [QPointF(x, y) for x, y in self._growth_ci_animation_points_low],
+            [QPointF(x, y) for x, y in self._growth_ci_animation_points_high],
+        )
+
+    def _clear_growth_visuals(self) -> None:
+        if self._growth_series:
+            self._growth_series.clear()
+        self._clear_ci_series()
+
+    def _clear_ci_series(self) -> None:
+        if self._growth_ci_upper_series:
+            self._growth_ci_upper_series.clear()
+        if self._growth_ci_lower_series:
+            self._growth_ci_lower_series.clear()
+        if self._growth_ci_area:
+            self._growth_ci_area.setVisible(False)
+
+    def _update_ci_series(
+        self,
+        low_points: Sequence[QPointF],
+        high_points: Sequence[QPointF],
+    ) -> None:
+        if not self._growth_ci_upper_series or not self._growth_ci_lower_series:
+            return
+
+        self._growth_ci_lower_series.replace(list(low_points))
+        self._growth_ci_upper_series.replace(list(high_points))
+        if self._growth_ci_area:
+            self._growth_ci_area.setVisible(True)
+
+    def _build_partial_points(
+        self,
+        source_points: Sequence[tuple[float, float]],
+        animation_value: float,
+    ) -> list[QPointF]:
+        if not source_points:
+            return []
+
+        segment_index = int(animation_value)
+        max_index = len(source_points) - 1
+        segment_index = max(0, min(segment_index, max_index))
+
+        displayed_points: list[QPointF] = []
+        for idx in range(min(segment_index + 1, len(source_points))):
+            x, y = source_points[idx]
+            displayed_points.append(QPointF(x, y))
+
+        next_index = segment_index + 1
+        if next_index < len(source_points):
+            start_x, start_y = source_points[segment_index]
+            end_x, end_y = source_points[next_index]
+            local_progress = animation_value - float(segment_index)
+            interpolated_x = start_x + (end_x - start_x) * local_progress
+            interpolated_y = start_y + (end_y - start_y) * local_progress
+            displayed_points.append(QPointF(interpolated_x, interpolated_y))
+
+        return displayed_points
+
     def _recalculate_growth_data(self) -> None:
         if not self._growth_table:
             return
 
         if not self._patient_data:
             self._set_growth_table_values(())
-            self._update_growth_chart_from_table()
+            self._update_growth_chart((), (), ())
             return
 
-        values = regression_V_no_treatment(self._patient_data)
-        self._set_growth_table_values(values)
-        self._update_growth_chart_from_table()
+        mean_values, ci_low, ci_high = regression_V_no_treatment_with_ci(
+            self._patient_data
+        )
+        self._set_growth_table_values(mean_values)
+        self._update_growth_chart(mean_values, ci_low, ci_high)
 
     def _set_growth_table_values(self, values: Sequence[float]) -> None:
         if not self._growth_table:
