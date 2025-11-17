@@ -48,6 +48,7 @@ except ImportError:  # pragma: no cover - fallback for PySide6 versions without 
     QWIDGETSIZE_MAX = (1 << 24) - 1
 
 from config import AppConfig
+from core.patient_features import calculate_stage
 from services.regression import regression_V_no_treatment
 from ui.dialogs.create_patient_dialog import CreatePatientDialog
 
@@ -1044,7 +1045,8 @@ class MainWindow(QMainWindow):
             return
 
         if not self._patient_data:
-            self._set_growth_table_values([])
+            zero_values = [0.0] * len(self._GROWTH_TABLE_HEADERS)
+            self._set_growth_table_values(zero_values)
             self._update_growth_chart_from_table()
             return
 
@@ -1111,7 +1113,7 @@ class MainWindow(QMainWindow):
             value_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
             self._patient_details_form.addRow(name_label, value_label)
 
-        stage_value = self._calculate_stage()
+        stage_value = calculate_stage(self._patient_data)
         if self._stage_value_label:
             self._stage_value_label.setText(stage_value)
 
@@ -1122,48 +1124,6 @@ class MainWindow(QMainWindow):
         self._patient_placeholder_label.hide()
         self._patient_details_widget.show()
         self._recalculate_growth_data()
-
-    def _calculate_stage(self) -> str:
-        if not self._patient_data:
-            return "—"
-
-        t_category = self._normalize_category(self._patient_data.get("T", ""), "T")
-        n_category = self._normalize_category(self._patient_data.get("N", ""), "N")
-        m_category = self._normalize_category(self._patient_data.get("M", ""), "M")
-
-        if not (t_category and n_category and m_category):
-            return "—"
-
-        if m_category == "M1":
-            return "IV"
-        if n_category == "N3" and m_category == "M0":
-            return "IIIC"
-
-        rules = [
-            ("Tis", "N0", "M0", "0"),
-            ("T1", "N0", "M0", "IA"),
-            ("T0", "N1mi", "M0", "IB"),
-            ("T1", "N1mi", "M0", "IB"),
-            ("T0", "N1", "M0", "IIA"),
-            ("T1", "N1", "M0", "IIA"),
-            ("T2", "N0", "M0", "IIA"),
-            ("T2", "N1", "M0", "IIB"),
-            ("T3", "N0", "M0", "IIB"),
-            ("T0", "N2", "M0", "IIIA"),
-            ("T1", "N2", "M0", "IIIA"),
-            ("T2", "N2", "M0", "IIIA"),
-            ("T3", "N1", "M0", "IIIA"),
-            ("T3", "N2", "M0", "IIIA"),
-            ("T4", "N0", "M0", "IIIB"),
-            ("T4", "N1", "M0", "IIIB"),
-            ("T4", "N2", "M0", "IIIB"),
-        ]
-
-        for t_rule, n_rule, m_rule, stage in rules:
-            if t_category == t_rule and n_category == n_rule and m_category == m_rule:
-                return stage
-
-        return "—"
 
     def _calculate_molecular_subtype(self) -> str:
         if not self._patient_data:
@@ -1236,46 +1196,6 @@ class MainWindow(QMainWindow):
         if percentage is not None:
             return percentage < 20
         return status is False
-
-    @staticmethod
-    def _normalize_category(value: str, category_type: str) -> str:
-        if not value:
-            return ""
-
-        head = value.split("—", 1)[0].strip()
-        head = head.split(" ", 1)[0].strip()
-
-        if not head:
-            return ""
-
-        if category_type == "T":
-            if head.lower().startswith("tis"):
-                return "Tis"
-            match = re.match(r"(T\\d+)", head)
-            if match:
-                return match.group(1)
-            return head if head.startswith("T") else ""
-
-        if category_type == "N":
-            if head.startswith(("c", "p")) and len(head) > 1:
-                head = head[1:]
-            mi_match = re.match(r"(N\\d+mi)", head)
-            if mi_match:
-                return mi_match.group(1)
-            match = re.match(r"(N\\d+)", head)
-            if match:
-                return match.group(1)
-            return head if head.startswith("N") else ""
-
-        if category_type == "M":
-            if head.startswith(("c", "p")) and len(head) > 1:
-                head = head[1:]
-            match = re.match(r"(M\\d)", head)
-            if match:
-                return match.group(1)
-            return head if head.startswith("M") else ""
-
-        return ""
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
         if self._startup_view and event.button() == Qt.LeftButton:
