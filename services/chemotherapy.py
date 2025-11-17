@@ -110,7 +110,17 @@ def generate_chemotherapy_forecast(
     _debug_print("Оценённые параметры роста", payload={"V0": V0, "K": K, "r": r})
 
     def model_for_fit(t_points, beta_kill, gamma, alpha, mu):
-        return _model_for_fit(t_points, beta_kill, gamma, alpha, mu, r, K, V0, dt=dt)
+        return _model_for_fit(
+            t_points,
+            beta_kill,
+            gamma,
+            alpha,
+            mu,
+            r=r,
+            K=K,
+            V0=V0,
+            dt=dt,
+        )
 
     try:
         popt, _ = curve_fit(
