@@ -32,6 +32,13 @@ _FEATURE_COLUMNS: Final = (
     "ki67_level",
     "tumor_size_before",
 )
+_ROMAN_STAGE_VALUES: Final = {
+    "0": 0.0,
+    "I": 1.0,
+    "II": 2.0,
+    "III": 3.0,
+    "IV": 4.0,
+}
 
 if joblib is not None:  # pragma: no branch - executed when scientific stack available
     try:
@@ -70,15 +77,16 @@ def _prepare_model_features(patient_data: Mapping[str, str] | None) -> dict[str,
         return None
 
     stage = calculate_stage(patient_data)
-    if not stage or stage == "—":
+    stage_numeric = _convert_stage_to_numeric(stage)
+    if stage_numeric is None:
         return None
 
     age = calculate_age(patient_data.get("Дата рождения"))
     menopausal_status = (patient_data.get("Менопаузальный статус", "") or "").strip().lower()
-    er_status = _clean_marker(patient_data.get("Рецептор эстрогена"))
-    pr_status = _clean_marker(patient_data.get("Рецептор прогестерона"))
-    her2_status = _clean_marker(patient_data.get("HER2"))
-    brca_status = _clean_marker(patient_data.get("Мутации в генах BRCA1/2"))
+    er_status = _parse_marker_status(patient_data.get("Рецептор эстрогена"))
+    pr_status = _parse_marker_status(patient_data.get("Рецептор прогестерона"))
+    her2_status = _parse_marker_status(patient_data.get("HER2"))
+    brca_status = _parse_marker_status(patient_data.get("Мутации в генах BRCA1/2"))
     ki67_level = _parse_numeric_value(patient_data.get("Уровень Ki-67 (%)"))
     tumor_size = _parse_numeric_value(patient_data.get("Размер опухоли до лечения (см)"))
 
@@ -95,7 +103,7 @@ def _prepare_model_features(patient_data: Mapping[str, str] | None) -> dict[str,
         return None
 
     return {
-        "stage": stage,
+        "stage": stage_numeric,
         "age": float(age),
         "menopausal_status": menopausal_status,
         "er_status": er_status,
@@ -147,11 +155,45 @@ def _parse_numeric_value(value: str | None) -> float | None:
     return parsed if parsed >= 0 else None
 
 
-def _clean_marker(value: str | None) -> str | None:
+def _convert_stage_to_numeric(stage: str | None) -> float | None:
+    if not stage:
+        return None
+
+    cleaned = stage.strip().upper()
+    if not cleaned or cleaned == "—":
+        return None
+
+    for prefix in ("IV", "III", "II", "I", "0"):
+        if cleaned.startswith(prefix):
+            return _ROMAN_STAGE_VALUES.get(prefix)
+    return None
+
+
+def _parse_marker_status(value: str | None) -> bool | None:
     if not value:
         return None
-    cleaned = value.strip()
-    return cleaned or None
+
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+
+    leading_token = normalized.split()[0]
+    if leading_token.startswith("+"):
+        return True
+    if leading_token.startswith("-"):
+        return False
+
+    if "+" in normalized and "-" not in normalized:
+        return True
+    if "-" in normalized and "+" not in normalized:
+        return False
+
+    if normalized.startswith(("pos", "полож")):
+        return True
+    if normalized.startswith(("neg", "отр")):
+        return False
+
+    return None
 
 
 def _zero_growth_values() -> list[float]:
