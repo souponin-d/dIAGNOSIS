@@ -174,6 +174,7 @@ class MainWindow(QMainWindow):
         self._patient_placeholder_label: QLabel | None = None
         self._patient_details_widget: QWidget | None = None
         self._patient_details_form: QFormLayout | None = None
+        self._edit_patient_button: QPushButton | None = None
         self._stage_value_label: QLabel | None = None
         self._molecular_subtype_value_label: QLabel | None = None
         self._growth_table: QTableWidget | None = None
@@ -417,6 +418,16 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._patient_data = dialog.collected_data()
             self._transition_to_full_screen()
+            self._refresh_patient_information_view()
+
+    def _open_edit_dialog(self) -> None:
+        if not self._patient_data:
+            self._open_create_dialog()
+            return
+
+        dialog = CreatePatientDialog(self, patient_data=self._patient_data, is_edit=True)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._patient_data = dialog.collected_data()
             self._refresh_patient_information_view()
 
     def _apply_startup_background_size(self) -> None:
@@ -674,9 +685,40 @@ class MainWindow(QMainWindow):
         patient_panel.setLayout(patient_panel_layout)
         patient_scroll.setWidget(patient_panel)
 
-        patient_title = QLabel("Информация о пациенте", patient_panel)
+        patient_header = QWidget(patient_panel)
+        patient_header_layout = QHBoxLayout()
+        patient_header_layout.setContentsMargins(0, 0, 0, 0)
+        patient_header_layout.setSpacing(12)
+        patient_header.setLayout(patient_header_layout)
+
+        patient_title = QLabel("Информация о пациенте", patient_header)
         patient_title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        patient_panel_layout.addWidget(patient_title)
+        patient_header_layout.addWidget(patient_title)
+        patient_header_layout.addStretch(1)
+
+        self._edit_patient_button = QPushButton("Редактировать", patient_header)
+        self._edit_patient_button.setCursor(Qt.PointingHandCursor)
+        self._edit_patient_button.setEnabled(False)
+        self._edit_patient_button.setObjectName("editPatientButton")
+        self._edit_patient_button.setStyleSheet(
+            """
+            QPushButton#editPatientButton {
+                background-color: #ffffff;
+                border: 1px solid #cbd3df;
+                border-radius: 10px;
+                padding: 6px 12px;
+                font-weight: 500;
+            }
+            QPushButton#editPatientButton:disabled {
+                color: #9aa5b5;
+                border-color: #e1e7ef;
+            }
+            """
+        )
+        self._edit_patient_button.clicked.connect(self._open_edit_dialog)
+        patient_header_layout.addWidget(self._edit_patient_button)
+
+        patient_panel_layout.addWidget(patient_header)
 
         self._patient_placeholder_label = QLabel(
             "Информация появится после заполнения формы.",
@@ -1092,6 +1134,8 @@ class MainWindow(QMainWindow):
         if not self._patient_data:
             self._patient_details_widget.hide()
             self._patient_placeholder_label.show()
+            if self._edit_patient_button:
+                self._edit_patient_button.setEnabled(False)
             self._recalculate_growth_data()
             return
 
@@ -1123,6 +1167,8 @@ class MainWindow(QMainWindow):
 
         self._patient_placeholder_label.hide()
         self._patient_details_widget.show()
+        if self._edit_patient_button:
+            self._edit_patient_button.setEnabled(True)
         self._recalculate_growth_data()
 
     def _calculate_molecular_subtype(self) -> str:
