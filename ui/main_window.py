@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import html
 import re
+from functools import partial
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
+
+from collections.abc import Mapping
 
 from PySide6.QtCharts import (
     QAreaSeries,
@@ -28,13 +31,13 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QAction,
+    QColor,
     QIcon,
     QKeyEvent,
     QMouseEvent,
     QPainter,
     QPixmap,
     QResizeEvent,
-    QColor,
     QPen,
 )
 from PySide6.QtWidgets import (
@@ -68,6 +71,7 @@ except ImportError:  # pragma: no cover - fallback for PySide6 versions without 
 
 from config import AppConfig
 from core.patient_features import calculate_age, calculate_stage, normalize_category
+from services.chemotherapy import generate_chemotherapy_forecast
 from services.regression import (
     regression_V_no_treatment,
     regression_V_no_treatment_with_ci,
@@ -165,6 +169,13 @@ class MainWindow(QMainWindow):
     _MORE_ICON_PATH = Path(__file__).resolve().parents[1] / "resources" / "images" / "more_back.png"
     _GROWTH_TABLE_HEADERS = ("Нач.", "3м", "6м", "12м", "24м")
     _GROWTH_ANIMATION_DURATION_MS = 1600
+    _FORECAST_SERIES = (
+        ("total", "Суммарный объём", "#163455", 2.8),
+        ("sensitive", "Чувствительные клетки", "#2a9d8f", 2.2),
+        ("tolerant", "Толерантные клетки", "#f4a261", 2.2),
+        ("resistant", "Резистентные клетки", "#e76f51", 2.2),
+    )
+    _FORECAST_DEFAULT_X_RANGE = (0.0, 24.0)
 
     def __init__(self, config: AppConfig, application: Optional[QApplication] = None) -> None:
         super().__init__()
@@ -216,6 +227,7 @@ class MainWindow(QMainWindow):
         self._growth_ci_animation_points_low: list[tuple[float, float]] = []
         self._growth_ci_animation_points_high: list[tuple[float, float]] = []
         self._therapy_log_view: QTextBrowser | None = None
+        self._forecast_charts: dict[str, dict[str, Any]] = {}
 
         self._init_ui()
         self._center_on_screen()
@@ -850,7 +862,7 @@ class MainWindow(QMainWindow):
 
         patient_highlights_layout.addWidget(subtype_container)
 
-        table_title = QLabel("Динамика наблюдения", patient_highlights)
+        table_title = QLabel("Оценка темпов роста опухоли", patient_highlights)
         table_title.setStyleSheet("font-size: 16px; font-weight: 600;")
         patient_highlights_layout.addWidget(table_title)
 
@@ -925,6 +937,44 @@ class MainWindow(QMainWindow):
                 therapy_layout.addWidget(self._therapy_log_view, 1)
 
                 section_layout.addWidget(therapy_background)
+            elif section == "Прогноз":
+                forecast_background = QFrame(section_tab)
+                forecast_background.setObjectName("forecastBackground")
+                forecast_background.setStyleSheet(
+                    "#forecastBackground { background-color: #ffffff; border-radius: 24px; }"
+                )
+                forecast_layout = QVBoxLayout()
+                forecast_layout.setContentsMargins(32, 32, 32, 32)
+                forecast_layout.setSpacing(16)
+                forecast_background.setLayout(forecast_layout)
+
+                forecast_title = QLabel(
+                    "Сценарное моделирование ответа на терапию",
+                    forecast_background,
+                )
+                forecast_title.setStyleSheet("font-size: 20px; font-weight: 600;")
+                forecast_layout.addWidget(forecast_title)
+
+                charts_row = QHBoxLayout()
+                charts_row.setContentsMargins(0, 0, 0, 0)
+                charts_row.setSpacing(16)
+                forecast_layout.addLayout(charts_row, stretch=1)
+
+                baseline_chart = self._create_forecast_chart_block(
+                    forecast_background,
+                    "Текущая стратегия",
+                    "baseline",
+                )
+                switch_chart = self._create_forecast_chart_block(
+                    forecast_background,
+                    "Усиление терапии в точке минимума",
+                    "switch",
+                )
+
+                charts_row.addWidget(baseline_chart, 1)
+                charts_row.addWidget(switch_chart, 1)
+
+                section_layout.addWidget(forecast_background)
             else:
                 section_label = QLabel("Раздел в разработке", section_tab)
                 section_label.setAlignment(Qt.AlignCenter)
@@ -1104,6 +1154,70 @@ class MainWindow(QMainWindow):
         chart_view.setStyleSheet("background-color: white; border: none;")
 
         return chart_view
+
+    def _create_forecast_chart_block(
+        self,
+        parent: QWidget,
+        title: str,
+        chart_key: str,
+    ) -> QWidget:
+        container = QFrame(parent)
+        container.setObjectName(f"forecastChart_{chart_key}")
+        container.setStyleSheet(
+            "QFrame { background-color: #f7f8fb; border-radius: 20px; }"
+        )
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+        container.setLayout(layout)
+
+        title_label = QLabel(title, container)
+        title_label.setStyleSheet("font-size: 16px; font-weight: 600;")
+        layout.addWidget(title_label)
+
+        chart = QChart()
+        chart.setBackgroundVisible(False)
+        chart.setDropShadowEnabled(False)
+        chart.legend().setAlignment(Qt.AlignBottom)
+
+        axis_x = QValueAxis()
+        axis_x.setLabelFormat("%.0f")
+        axis_x.setTitleText("Время, мес")
+        axis_x.setRange(*self._FORECAST_DEFAULT_X_RANGE)
+        chart.addAxis(axis_x, Qt.AlignBottom)
+
+        axis_y = QValueAxis()
+        axis_y.setLabelFormat("%.1f")
+        axis_y.setTitleText("Объём, см³")
+        axis_y.setRange(0.0, 1.0)
+        chart.addAxis(axis_y, Qt.AlignLeft)
+
+        series_map: dict[str, QLineSeries] = {}
+        for series_id, series_name, color_hex, width in self._FORECAST_SERIES:
+            line_series = QLineSeries()
+            line_series.setName(series_name)
+            pen = QPen(QColor(color_hex))
+            pen.setWidthF(width)
+            line_series.setPen(pen)
+            chart.addSeries(line_series)
+            line_series.attachAxis(axis_x)
+            line_series.attachAxis(axis_y)
+            series_map[series_id] = line_series
+
+        chart_view = QChartView(chart, container)
+        chart_view.setRenderHint(QPainter.Antialiasing)
+        chart_view.setStyleSheet("background: transparent; border: none;")
+        layout.addWidget(chart_view, 1)
+
+        self._forecast_charts[chart_key] = {
+            "series": series_map,
+            "axis_x": axis_x,
+            "axis_y": axis_y,
+            "animation": None,
+            "points": {},
+        }
+
+        return container
 
     def _update_growth_chart(
         self,
@@ -1302,6 +1416,162 @@ class MainWindow(QMainWindow):
 
         return displayed_points
 
+    def _update_forecast_views(self, values: Sequence[float]) -> None:
+        if not self._forecast_charts:
+            return
+
+        if not values:
+            self._clear_forecast_charts()
+            return
+
+        forecast = generate_chemotherapy_forecast(values)
+        if not forecast:
+            self._clear_forecast_charts()
+            return
+
+        self._set_forecast_chart_points("baseline", forecast.baseline.to_mapping())
+        self._set_forecast_chart_points("switch", forecast.adjusted.to_mapping())
+
+    def _set_forecast_chart_points(
+        self,
+        chart_key: str,
+        series_points: Mapping[str, Sequence[tuple[float, float]]],
+    ) -> None:
+        state = self._forecast_charts.get(chart_key)
+        if not state:
+            return
+
+        normalized: dict[str, list[tuple[float, float]]] = {}
+        for series_id, *_ in self._FORECAST_SERIES:
+            raw_points = series_points.get(series_id, ()) if series_points else ()
+            normalized[series_id] = [
+                (float(x), float(y))
+                for x, y in raw_points
+            ]
+        state["points"] = normalized
+        self._update_forecast_axis_range(chart_key)
+        self._start_forecast_animation(chart_key)
+
+    def _update_forecast_axis_range(self, chart_key: str) -> None:
+        state = self._forecast_charts.get(chart_key)
+        if not state:
+            return
+
+        axis_x: QValueAxis | None = state.get("axis_x")
+        axis_y: QValueAxis | None = state.get("axis_y")
+        if not axis_x or not axis_y:
+            return
+
+        points = state.get("points") or {}
+        x_values = [x for series in points.values() for x, _ in series]
+        if x_values:
+            axis_x.setRange(min(x_values), max(x_values))
+        else:
+            axis_x.setRange(*self._FORECAST_DEFAULT_X_RANGE)
+
+        y_values = [y for series in points.values() for _, y in series]
+        if y_values:
+            min_y = min(y_values)
+            max_y = max(y_values)
+            if min_y == max_y:
+                margin = max(1.0, abs(max_y) * 0.2)
+            else:
+                margin = max(0.5, (max_y - min_y) * 0.1)
+            axis_y.setRange(max(0.0, min_y - margin), max_y + margin)
+        else:
+            axis_y.setRange(0.0, 1.0)
+
+    def _start_forecast_animation(self, chart_key: str) -> None:
+        state = self._forecast_charts.get(chart_key)
+        if not state:
+            return
+
+        series_map: dict[str, QLineSeries] = state.get("series", {})
+        points = state.get("points") or {}
+
+        lengths = [len(series_points) for series_points in points.values() if series_points]
+        if not lengths:
+            for series in series_map.values():
+                series.clear()
+            return
+
+        max_len = max(lengths)
+        if max_len <= 1:
+            for key, series in series_map.items():
+                self._replace_series_with_points(series, points.get(key))
+            return
+
+        animation: QVariantAnimation | None = state.get("animation")
+        if animation is None:
+            animation = QVariantAnimation(self)
+            animation.setEasingCurve(QEasingCurve.InOutCubic)
+            animation.valueChanged.connect(
+                partial(self._handle_forecast_animation_value, chart_key)
+            )
+            animation.finished.connect(
+                partial(self._finalize_forecast_animation, chart_key)
+            )
+            state["animation"] = animation
+
+        animation.stop()
+        animation.setDuration(self._GROWTH_ANIMATION_DURATION_MS)
+        animation.setStartValue(0.0)
+        animation.setEndValue(float(max_len - 1))
+
+        for series in series_map.values():
+            series.clear()
+
+        animation.start()
+
+    def _handle_forecast_animation_value(self, chart_key: str, value: float) -> None:
+        state = self._forecast_charts.get(chart_key)
+        if not state:
+            return
+
+        points = state.get("points") or {}
+        series_map: dict[str, QLineSeries] = state.get("series", {})
+
+        for key, series in series_map.items():
+            source_points = points.get(key) or []
+            partial_points = self._build_partial_points(source_points, float(value))
+            series.replace(partial_points)
+
+    def _finalize_forecast_animation(self, chart_key: str) -> None:
+        state = self._forecast_charts.get(chart_key)
+        if not state:
+            return
+
+        points = state.get("points") or {}
+        series_map: dict[str, QLineSeries] = state.get("series", {})
+        for key, series in series_map.items():
+            self._replace_series_with_points(series, points.get(key))
+
+    def _clear_forecast_charts(self) -> None:
+        if not self._forecast_charts:
+            return
+
+        for state in self._forecast_charts.values():
+            state["points"] = {}
+            for series in state.get("series", {}).values():
+                series.clear()
+            axis_x: QValueAxis | None = state.get("axis_x")
+            axis_y: QValueAxis | None = state.get("axis_y")
+            if axis_x:
+                axis_x.setRange(*self._FORECAST_DEFAULT_X_RANGE)
+            if axis_y:
+                axis_y.setRange(0.0, 1.0)
+
+    @staticmethod
+    def _replace_series_with_points(
+        series: QLineSeries,
+        points: Sequence[tuple[float, float]] | None,
+    ) -> None:
+        if points:
+            qt_points = [QPointF(x, y) for x, y in points]
+        else:
+            qt_points = []
+        series.replace(qt_points)
+
     def _recalculate_growth_data(self) -> None:
         if not self._growth_table:
             return
@@ -1309,6 +1579,7 @@ class MainWindow(QMainWindow):
         if not self._patient_data:
             self._set_growth_table_values(())
             self._update_growth_chart((), (), ())
+            self._update_forecast_views(())
             return
 
         mean_values, ci_low, ci_high = regression_V_no_treatment_with_ci(
@@ -1316,6 +1587,7 @@ class MainWindow(QMainWindow):
         )
         self._set_growth_table_values(mean_values)
         self._update_growth_chart(mean_values, ci_low, ci_high)
+        self._update_forecast_views(mean_values)
 
     def _set_growth_table_values(self, values: Sequence[float]) -> None:
         if not self._growth_table:
